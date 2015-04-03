@@ -53,7 +53,6 @@ int release_rr(const char * path, struct fuse_file_info * fi){
 }
 
 static int getattr_rr(const char *path, struct stat *stbuf) {
-	int res = 0;
 log_msg("getattr_rr(): enter\r\ngetattr_rr(): path=");
 log_msg(path);
 	memset(stbuf, 0, sizeof(struct stat)); // so if field left empty, its '0' not garbage
@@ -68,7 +67,7 @@ log_msg(path);
 	opendir_rr(path, fi_2);
 	if(fi_2->fh==NULL){
 		log_msg("getattr_rr(): fi_2->fh==NULL");
-		return 0; 
+		return -ENOENT; 
 	}
 	log_msg("getattr_rr(): fi_2->fh!=NULL, is");
 	log_msg(fi_2->fh);
@@ -130,7 +129,7 @@ log_msg(path);
 // so ls can output it to the screen from there
 // this does not MAKE the file
 log_msg("getattr_rr(): exit");
-	return res;
+	return 0;
 }
 
 static int readdir_rr(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
@@ -600,6 +599,99 @@ void create_root_dir(){
 	
 }
 
+	/**
+	 * Create and open a file
+	 *
+	 * If the file does not exist, first create it with the specified
+	 * mode, and then open it.
+	 *
+	 */
+	int create_rr(const char * path, mode_t mode, struct fuse_file_info * fi){
+		// check if exists
+		log_msg("create(): enter\r\ncreate(): path=");
+		log_msg(path);
+		
+		// this doesnt get called when trying to make a file?
+		
+		if(fi==NULL){
+			log_msg("create(): exit on null");
+			return 0;
+		}
+		int result=opendir_rr(path, fi);
+		if(result!=ENOENT){ 
+			log_msg("create(): exit, file already exists/error");
+			return 0;
+		}
+		
+		//~ int free_block=first_free_block();
+		
+		// if not, get parent directoy node
+		// check if enough space to put in file name and not exceed 4096 bytes.
+		// fail if no room left
+		
+		
+		// if not, look up first free block
+		
+		// open that block, get fi->fh as the 4096 bytes
+		
+		// sprintf all the expected values, follow create_root_dir basically, but different field order
+		
+		
+		// needs to check
+		log_msg("create(): exit");
+		return 0;
+	}
+	
+int mkdir_rr(const char *path, mode_t mode){
+	// check if exists
+	log_msg("mkdir_rr(): enter\r\ncreate(): path=");
+	log_msg(path);
+	
+	// this doesnt get called when trying to make a file?
+
+	struct fuse_file_info * fi=malloc(sizeof(struct fuse_file_info));
+	int result=opendir_rr(path, fi);
+	if(result!=ENOENT){ 
+		log_msg("mkdir_rr(): exit, file already exists/error");
+		return 0;
+	}
+	log_msg("mkdir_rr(): dir does not exist");
+	if(fi->fh!=NULL) { 
+		log_msg("mkdir_rr(): fi->fh="); 
+		log_msg(fi->fh); 
+	}
+	free(fi);
+	
+	//~ int free_block=first_free_block();
+	
+	// if not, get parent directoy node
+	// check if enough space to put in file name and not exceed 4096 bytes.
+	// fail if no room left
+	
+	
+	// if not, look up first free block
+	
+	// open that block, get fi->fh as the 4096 bytes
+	
+	// sprintf all the expected values, follow create_root_dir basically, but different field order
+	
+	
+	// needs to check
+	log_msg("mkdir_rr(): exit");
+	return 0;
+}
+	
+	
+	
+int mknod_rr(const char *path, mode_t mode, dev_t dev){
+	log_msg("mknod(): enter\r\nmknod(): path=");
+	log_msg(path);
+	create_rr(path, mode, NULL);
+
+	log_msg("mknod(): exit");
+	return 0;
+}
+
 // this is essentially OPEN, so opendir_rr should just call open(path, fi)
 // if limiting your amt of malloc, means you forgot to return an int
 static int opendir_rr(const char* path, struct fuse_file_info * fi){	//initialize all needed variables and paths
@@ -714,6 +806,17 @@ log_msg(next_block_num);
 	} // overall loop ends
 	return 0;
 }
+
+int write_rr(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+	log_msg("write_rr(): enter\r\nwrite_rr(): path=");
+	log_msg(path);
+    
+  
+	log_msg("write_rr(): exit");
+    return size;
+}
+
+
 static struct fuse_operations oper = {
 	.init	    = init_rr,
 	.getattr	= getattr_rr,
@@ -723,6 +826,9 @@ static struct fuse_operations oper = {
 	.opendir 	= opendir_rr,
 	.release 	= release_rr,
 	.releasedir = releasedir_rr,
+	.create 	= create_rr,
+	.mkdir 		= mkdir_rr,
+	.write 		= write_rr,
 };
 
 
