@@ -644,26 +644,35 @@ void create_root_dir(){
 	
 int mkdir_rr(const char *path, mode_t mode){
 	// check if exists
-	log_msg("mkdir_rr(): enter\r\ncreate(): path=");
+	log_msg("mkdir_rr(): enter\r\nmkdir_rr(): path=");
 	log_msg(path);
 	
 	// this doesnt get called when trying to make a file?
 
 	struct fuse_file_info * fi=malloc(sizeof(struct fuse_file_info));
 	int result=opendir_rr(path, fi);
-	if(result!=ENOENT){ 
+	if(result!=-ENOENT){ 
 		log_msg("mkdir_rr(): exit, file already exists/error");
 		return 0;
 	}
 	log_msg("mkdir_rr(): dir does not exist");
+	
+	
+	
 	if(fi->fh!=NULL) { 
 		log_msg("mkdir_rr(): fi->fh="); 
 		log_msg(fi->fh); 
 	}
 	free(fi);
 	
-	//~ int free_block=first_free_block();
+	int free_block=first_free_block();
+	char* debug=malloc(100);
+	sprintf(debug, "%d", free_block);
+	log_msg("mkdir_rr(): free_block");
+	log_msg(debug);
+	free(debug);
 	
+	// remove_free_block(free_block);
 	// if not, get parent directoy node
 	// check if enough space to put in file name and not exceed 4096 bytes.
 	// fail if no room left
@@ -681,12 +690,58 @@ int mkdir_rr(const char *path, mode_t mode){
 	return 0;
 }
 	
+int first_free_block(){
+	int current_block_num=1; // hard coded?
+	int first_free=-1;
+	char* full_path=malloc(1000); // definitely hard coded
+	full_path[0]='\0';
 	
+	sprintf(full_path, "%s", fuse_get_context()->private_data);
+	sprintf(full_path+strlen(full_path), "%s", "/blocks/fusedata.");
+	int full_path_pos=strlen(full_path);
+	while(current_block_num < 26) { // fix hard coding
+		sprintf(full_path+full_path_pos, "%d", current_block_num);
+		int result=access(full_path, F_OK);
+		if(result==0){
+			FILE* fh=fopen(full_path, "r");
+			char* file_data=malloc(4096); // hard coded
+			fread(file_data, 4096, 1, fh); // hard coded
+			
+			int file_pos=0;
+			char * first_free_ch=malloc(1000); // FIX HARD CODING
+			first_free_ch[0]='\0';
+			while(file_data[file_pos]!=','){
+				sprintf(first_free_ch+strlen(first_free_ch), "%c", file_data[file_pos]);
+				file_pos++;
+			}
+			if(first_free_ch[0]!='\0'){ // if there is a free block in this block
+				first_free=atoi(first_free_ch);
+				free(file_data);
+				free(first_free_ch);
+				free(full_path);
+				return first_free;
+			}
+			free(file_data);
+			free(first_free_ch);
+		}
+		current_block_num++;
+	}
+	free(full_path);
+	return first_free;
+}	
+
+int remove_free_block(int block){
+	// must leave a ',' if NO blocks left in this chunk, so "first free block" doesn't crash
+	// simply delete everything, but check if after your comma, if there is a '0'
+	// no # starts with a leading 0, so thats teh signal to leave your comma
 	
+	return 0;
+}
+
 int mknod_rr(const char *path, mode_t mode, dev_t dev){
 	log_msg("mknod(): enter\r\nmknod(): path=");
 	log_msg(path);
-	create_rr(path, mode, NULL);
+	//create_rr(path, mode, NULL);
 
 	log_msg("mknod(): exit");
 	return 0;
@@ -800,7 +855,7 @@ log_msg(next_block_num);
 				free(block_data);
 				log_msg("opendir_rr(): exit on directory not found in dict");
 				if(fi!=NULL) { fi->fh=NULL; } 
-				return ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
+				return -ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
 			}
 		}
 	} // overall loop ends
