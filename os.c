@@ -396,16 +396,26 @@ log_msg(path);
 	log_msg(flags);
 	free(flags);
 	
-	size=4096*2; // originally 4096 for whatever reason
+	// size IS the size of the fi->fh you wrote,
+	// and FUSE will take your buf fill and only show the first however many chars
+	// your stbuf->st_size was
+	// size is.. known?
+	//~ size=4096*2000; // originally 4096 for whatever reason
 	log_msg("read_rr(): fi->fh");
 	if(fi!=NULL && fi->fh!=NULL) { log_msg(fi->fh); }
 	//~ if(size+offset>4096) { // fix hard coding for indirect
 		//~ size=4096-offset; 
 	//~ }
-	memcpy(buf, fi->fh + offset, size);
-	log_msg("read_rr(): buf=");
+	
+	
+	
+	
+	log_msg("read_rr(): buf before=");
 	log_msg(buf);
-	log_msg("readdir_rr(): exit");
+	memcpy(buf, fi->fh + offset, size);
+	log_msg("read_rr(): buf after");
+	log_msg(buf);
+	log_msg("read_rr(): exit");
 	return size;
 }
 
