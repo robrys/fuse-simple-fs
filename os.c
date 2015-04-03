@@ -730,11 +730,71 @@ int first_free_block(){
 	return first_free;
 }	
 
-int remove_free_block(int block){
+int remove_free_block(int rm_block){
 	// must leave a ',' if NO blocks left in this chunk, so "first free block" doesn't crash
 	// simply delete everything, but check if after your comma, if there is a '0'
 	// no # starts with a leading 0, so thats teh signal to leave your comma
+	int current_block_num=1; // hard coded?
+	//~ int first_free=-1;
+	char* full_path=malloc(1000); // definitely hard coded
+	full_path[0]='\0';
 	
+	sprintf(full_path, "%s", fuse_get_context()->private_data);
+	sprintf(full_path+strlen(full_path), "%s", "/blocks/fusedata.");
+	int full_path_pos=strlen(full_path);
+	while(current_block_num < 26) { // fix hard coding
+		sprintf(full_path+full_path_pos, "%d", current_block_num);
+		int result=access(full_path, F_OK);
+		if(result==0){
+			FILE* fh=fopen(full_path, "r");
+			char* file_data=malloc(4096); // hard coded
+			fread(file_data, 4096, 1, fh); // hard coded
+			
+			int file_pos=0;
+			char * current_block_num=malloc(1000); // FIX HARD CODING
+			current_block_num[0]='\0';
+			// search until the last free number
+			while(file_data[file_pos]!=',' || file_data[file_pos+1]!='0'){
+				while(file_data[file_pos]!=','){
+					sprintf(current_block_num+strlen(current_block_num), "%c", file_data[file_pos]);
+					file_pos++;
+				}
+				if(atoi(current_block_num)==rm_block){
+					// remove that block, and its comma, only if 0 is not after the comma
+					
+					
+					
+					// implement this
+					
+					
+					
+					
+					
+					
+					// redo the while not , or 0 to account for
+					// file_pos ++ after hit a ,
+					// but HOW?
+					
+					
+					
+					
+					return 0;
+				}
+				file_pos++; // move past the ,
+			}
+			if(first_free_ch[0]!='\0'){ // if there is a free block in this block
+				first_free=atoi(first_free_ch);
+				free(file_data);
+				free(first_free_ch);
+				free(full_path);
+				return first_free;
+			}
+			free(file_data);
+			free(first_free_ch);
+		}
+		current_block_num++;
+	}
+	free(full_path);
 	return 0;
 }
 
