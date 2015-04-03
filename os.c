@@ -17,7 +17,7 @@
 fusermount -u ~/Desktop/test/m; gcc -Wall -g ~/Desktop/test/os.c `pkg-config fuse --cflags --libs` -o OS_hw; ./OS_hw ./m; ls -al m
 
 */
-static int opendir(const char* path, struct fuse_file_info * fi);
+static int opendir_rr(const char* path, struct fuse_file_info * fi);
 
 void log_msg(const char* msg){
 	FILE* fh=fopen("/home/rahhbertt/Desktop/test/logs.txt", "a");
@@ -28,25 +28,49 @@ void log_msg(const char* msg){
 	fclose(fh);
 }
 
-static int KATZ_getattr(const char *path, struct stat *stbuf) {
+int releasedir_rr(const char * path, struct fuse_file_info * fi){
+	log_msg("releasedir(): enter");
+	if(fi!=NULL && fi->fh!=NULL){
+		log_msg("releasedir(): fi->fh");
+		log_msg(fi->fh);
+		free(fi->fh);
+		fi->fh=NULL;
+	}
+	log_msg("releasedir(): exit");
+	return 0;
+}
+
+int release_rr(const char * path, struct fuse_file_info * fi){
+	log_msg("release(): enter");
+	if(fi!=NULL && fi->fh!=NULL){
+		log_msg("release(): fi->fh");
+		log_msg(fi->fh);
+		free(fi->fh);
+		fi->fh=NULL;
+	}
+	log_msg("release(): exit");
+	return 0;
+}
+
+static int getattr_rr(const char *path, struct stat *stbuf) {
 	int res = 0;
-log_msg("Entering getattr() for path:");
+log_msg("getattr_rr(): enter\r\ngetattr_rr(): path=");
 log_msg(path);
 	memset(stbuf, 0, sizeof(struct stat)); // so if field left empty, its '0' not garbage
 
 	// no dir passed in, no chance to do otherwise
-	// now for every getattr have to recursively find the dir, then the block #
+	// now for every getattr_rr have to recursively find the dir, then the block #
 	// then load the file into memory
 	// then load up the stbuf
 	
 	// open directory/file, load it into memory; FUSE does not pass anything to get to this
 	struct fuse_file_info * fi_2=malloc(11*sizeof(uint64_t)); // about right
-	opendir(path, fi_2);
+	opendir_rr(path, fi_2);
 	if(fi_2->fh==NULL){
-		log_msg("getattr(): fi_2->fh==NULL");
+		log_msg("getattr_rr(): fi_2->fh==NULL");
 		return 0; 
 	}
-	log_msg("getattr(): fi_2->fh");
+	log_msg("getattr_rr(): fi_2->fh!=NULL, is");
 	log_msg(fi_2->fh);
 	char *block_data=fi_2->fh;
 	// load up attributes
@@ -90,13 +114,13 @@ log_msg(path);
 		}
 		else { break; } // reached the end
 		field_count++;
-		log_msg("getattr(): current field");
-		log_msg(current_field);
-		log_msg("getattr(): field_start_ch");
-		char * one=malloc(4);
-		sprintf(one, "%c", block_data[field_start_ch]);
-		log_msg(one);
-		free(one);
+		//~ log_msg("getattr_rr(): current field");
+		//~ log_msg(current_field);
+		//~ log_msg("getattr_rr(): field_start_ch");
+		//~ char * one=malloc(4);
+		//~ sprintf(one, "%c", block_data[field_start_ch]);
+		//~ log_msg(one);
+		//~ free(one);
 		
 		current_field[0]='\0'; // empty the string
 	}
@@ -105,18 +129,18 @@ log_msg(path);
 // this puts the file attributes you wan to show into the stat buffer
 // so ls can output it to the screen from there
 // this does not MAKE the file
-log_msg("Leaving getattr()");
+log_msg("getattr_rr(): exit");
 	return res;
 }
 
-static int KATZ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
-	log_msg("readdir(): path=");
+static int readdir_rr(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
+	log_msg("readdir_rr(): path=");
 	log_msg(path);
 	
 	// the loaded directory inode
 	char* block_data=fi->fh;
 	if(fi->fh==NULL) { 
-		log_msg("\treaddir(): fi->fh==NULL");
+		log_msg("\readdir_rr(): fi->fh==NULL");
 		return 0; 
 	} // call open dir in here to get a pointer to data, and then call closedir/free the data?
 
@@ -142,7 +166,7 @@ static int KATZ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off
 			dict_pos++; 
 		}
 		filler(buf, current_entry +1, NULL, 0); // was only giving me 1 char since overwrote [0] to \0, got rid of the "/"
-		log_msg("readdir(): current_entry=");
+		log_msg("readdir_rr(): current_entry=");
 		log_msg(current_entry);
 		
 		current_entry[path_pos]='\0'; // str is now "empty"
@@ -152,24 +176,24 @@ static int KATZ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off
 		if(block_data[dict_pos]==','){ dict_pos+=3; } // advance past those 3 chars ',' 'd' ':'
 		else if(block_data[dict_pos]=='}'){ 
 			free(current_entry); // one point of exit
-			log_msg("readdir(): end of dict");
+			log_msg("readdir_rr(): exit -> end of dict");
 			return 0; // you've read the dictionary
 		}
 		if(dict_pos>=4096){ 
 			free(current_entry);
-			log_msg("readdir(): exceeded 4096");
+			log_msg("readdir_rr(): exit -> exceeded 4096");
 			return 0; 
 		} // serious error
 	}
 }
 
-static int KATZ_open(const char *path, struct fuse_file_info *fi) {
+static int open_rr(const char *path, struct fuse_file_info *fi) {
 // for every file here needs to check strcmp is okay
-	log_msg("Entering open() for path:");
+	log_msg("open_rr(): enter\r\nopen(): path=");
 log_msg(path);
 // clean up the fi->fh on release
 
-	//~ if (strcmp(path, KATZ_path) != 0 && strcmp(path, "/testing") !=0 && strcmp(path, "/fusedata.0")  !=0)
+	//~ if (strcmp(path, path) != 0 && strcmp(path, "/testing") !=0 && strcmp(path, "/fusedata.0")  !=0)
 		//~ return -ENOENT;
 //~ 
 	//~ if ((fi->flags & 3) != O_RDONLY)
@@ -177,37 +201,54 @@ log_msg(path);
 		//~ 
 		
 		// how and when to handle indirect?
-	opendir(path, fi); // this just gets you the inode
-	log_msg("open(): fi="); // maybe READ and write should handle indirects?
+	opendir_rr(path, fi); // this just gets you the inode
+	log_msg("open_rr(): fi="); // maybe READ and write should handle indirects?
 	if(fi->fh != NULL){ log_msg(fi->fh); }
-	else { log_msg("fi->fh==NULL"); }	
+	else { 
+		log_msg("open_rr(): fi->fh==NULL"); 
+		return 0;
+	}	
 	char* block_data=fi->fh;
-	
-	char* file_size=malloc(100); // FIX HARD CODING
-	file_size[0]='\0'; // strlen =0
 	int loc_pos=1;
-	while(block_data[loc_pos-1]!=':') { loc_pos++; } // get file size
-	while(block_data[loc_pos]!=',') { 
-		sprintf(file_size+strlen(file_size), "%c", block_data[loc_pos]);
-		loc_pos++;
-		log_msg("open(): file_size building");
-		log_msg(file_size);
+	
+	
+	
+	//~ char* file_size=malloc(100); // FIX HARD CODING
+	//~ file_size[0]='\0'; // strlen =0
+	//~ while(block_data[loc_pos-1]!=':') { loc_pos++; } // get file size
+	//~ while(block_data[loc_pos]!=',') { 
+		//~ sprintf(file_size+strlen(file_size), "%c", block_data[loc_pos]);
+		//~ loc_pos++;
+		//~ log_msg("open(): file_size building");
+		//~ log_msg(file_size);
+	//~ }
+	//~ // check if fi = null?
+	//~ fi->fh_old=file_size;
+	//~ log_msg("open(): fi->fh_old");
+	//~ //file_size[0]='\0'; // fh_old has a literal pointer to this
+	//~ char* temp=malloc(10);
+	//~ sprintf(temp, "%s", fi->fh_old);
+	//~ log_msg(temp);
+	//~ free(file_size); // free it at close
+	//~ free(temp);
+	//~ 
+	
+	int indirect=-1;
+	while(block_data[loc_pos]!='i' || block_data[loc_pos+1] !='n' || block_data[loc_pos+2] !='d'){ loc_pos++; }
+	while(block_data[loc_pos-1]!=':'){ loc_pos++; } // get to first char after :
+	if(block_data[loc_pos]=='1'){
+		log_msg("open_rr(): indirect is 1");		
+		indirect=1;
 	}
-	// check if fi = null?
-	fi->fh_old=file_size;
-	log_msg("open(): fi->fh_old");
-	file_size[0]='\0';
-	sprintf(file_size, "%s", fi->fh_old);
-	log_msg(file_size);
-	free(file_size);
-	
-	
-	
+	else if(block_data[loc_pos]=='0'){
+		log_msg("open_rr(): indirect is 0");				
+		indirect=0;
+	}
 	while(block_data[loc_pos]!='l' || block_data[loc_pos+1] !='o' || block_data[loc_pos+2] !='c'){ loc_pos++; }
 	char * log=malloc(10);
 	sprintf(log, "%d", loc_pos);
-	log_msg("open(): loc_pos=");
-	log_msg(log);
+	//~ log_msg("open(): loc_pos=");
+	//~ log_msg(log);
 	//l, o, c, a, t, i, o, n, :
 	while(block_data[loc_pos-1]!=':'){ loc_pos++; } // get to first char after :
 	char* location=malloc(100); // FIX HARD CODING
@@ -220,65 +261,150 @@ log_msg(path);
 	abs_loc[0]='\0'; // to be safe
 	sprintf(abs_loc, "%s", (char *)fuse_get_context()->private_data);
 	sprintf(abs_loc+strlen(abs_loc), "%s", "/blocks/fusedata.");
+	int path_name_fd=strlen(abs_loc);
 	sprintf(abs_loc+strlen(abs_loc), "%s", location);
-	char* file_data=malloc(4096); // multiples here
-	int result=access(abs_loc, F_OK);
-	log_msg("open(): location=");
-	log_msg(abs_loc);
-	if(result==0){
-		log_msg("open() file opened");
-		FILE* fh=fopen(abs_loc, "r");
-		fread(file_data, 4096, 1, fh); // FIX HARD CODING
-		fclose(fh);
-	}
-	log_msg("open(): file_data=");
-	log_msg(file_data);
 	
-	if(fi!=NULL){
-		fi->fh=file_data; 
+	
+	if(!indirect){
+		char* file_data=malloc(4096); // multiples here
+		int result=access(abs_loc, F_OK);
+		log_msg("open_rr(): direct location=");
+		log_msg(abs_loc);
+		
+		
+		if(result==0){
+			log_msg("open_rr() direct file opened");
+			FILE* fh=fopen(abs_loc, "r");
+			fread(file_data, 4096, 1, fh); // FIX HARD CODING
+			fclose(fh);
+		}
+		log_msg("open_rr(): direct file_data=");
+		log_msg(file_data);
+		
+		if(fi!=NULL){
+			fi->fh=file_data; 
+		}
 	}
+	else {
+		
+		// if INDIRECT, need to know # of blocks
+		int num_blocks=0;
+		
+		// get the indirect block's data
+		char* file_data=malloc(4096); // multiples here
+		int result=access(abs_loc, F_OK);
+		log_msg("open_rr(): ind_location=");
+		log_msg(abs_loc);
+		if(result==0){
+			log_msg("open_rr() ind file opened");
+			FILE* fh=fopen(abs_loc, "r");
+			fread(file_data, 4096, 1, fh); // FIX HARD CODING
+			fclose(fh);
+		} // else.. what?
+		log_msg("open_rr(): indirect block data=");
+		log_msg(file_data);
+
+		// count the # of blocks
+		int ind_pos=0;
+		while(file_data[ind_pos]!=',' || file_data[ind_pos+1]!='0'){
+			ind_pos++; // move past the comma, if first run, skip a byte, at least 1 byte before ,
+			while(file_data[ind_pos]!=','){ ind_pos++; }
+			num_blocks++;
+		}
+		
+		// read a block #, add its data to the buffer, repeat
+		char* current_block_num=malloc(20); // FIX HARD CODING
+		current_block_num[0]='\0';
+		char* ultra_file=malloc(num_blocks*4096); // FIX HARD CODING
+		ultra_file[0]='\0';
+		int len_ufile=0;
+		ind_pos=0; // now read in block #s
+		while(ind_pos==0 || file_data[ind_pos-1]!=',' || file_data[ind_pos]!='0'){ // 400 ptrs guarnatees this
+			// when start, just go ahead
+			// after a loop, the ind_pos is one AFTER the comma
+			// when ind_pos==0, dont want to access ind_pos-1 and cause havoc
+			while(file_data[ind_pos]!=','){ 
+				sprintf(current_block_num+strlen(current_block_num), "%c", file_data[ind_pos]);
+				ind_pos++; 
+			}
+			sprintf(abs_loc+path_name_fd, "%s", current_block_num);
+			current_block_num[0]='\0'; // empty str now
+			
+			int result=access(abs_loc, F_OK);
+			log_msg("open_rr(): ind_location=");
+			log_msg(abs_loc);
+			if(result==0){
+				log_msg("open_rr() ind file opened");
+				FILE* fh=fopen(abs_loc, "r");
+				fread(ultra_file+len_ufile, 4096, 1, fh); // FIX HARD CODING
+				fclose(fh);
+				len_ufile+=4096;
+			} // undefined if error? or just log_msg if error?
+			ind_pos++;
+		}
+		
+		free(file_data);
+		free(current_block_num);
+		log_msg("open_rr(): ultra_file");
+		log_msg(ultra_file);
+		if(fi!=NULL){
+			fi->fh=ultra_file; 
+		}
+		
+		//free(ultra_file);
+	}
+	
+	
 	//~ free(file_data);
 	//~ free(file_size);
 	free(abs_loc);
 	free(location);
-	log_msg("Leaving open()");
+	log_msg("open_rr(): exit");
 	return 0;
 }
 
 //release(const char* path, struct fuse_file_info *fi)
 
-static int KATZ_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
- log_msg("Entering read() for path:");
+static int read_rr(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+ log_msg("readdir_rr(): enter\r\readdir_rr(): path=");
 log_msg(path);
  	
- 	//~ const char* KATZ_strz="ht there";
+ 	//~ const char* strz="ht there";
 	//~ size_t len;
 	//~ (void) fi;
 	//~ // for every file here needs to check strcmp is okay
-	//~ if(strcmp(path, KATZ_path) != 0 && strcmp(path, "/testing") !=0 && strcmp(path, "/fusedata.0")  !=0)
+	//~ if(strcmp(path, path) != 0 && strcmp(path, "/testing") !=0 && strcmp(path, "/fusedata.0")  !=0)
 		//~ return -ENOENT;
 //~ 
 	//~ if(strcmp(path, "/testing")==0){
-		//~ len = strlen(KATZ_strz);
+		//~ len = strlen(strz);
 	//~ } else {
-		//~ len = strlen(KATZ_str);
+		//~ len = strlen(str);
 	//~ }
 	//~ if (offset < len) {
-	log_msg("read(): fi->flags");
+	
+	// size is uninitialzied, it wants you to read the whole file
+	
+	
+	log_msg("readdir_rr(): size to read");
 	char* flags=malloc(100); // fix hard coding
-	sprintf(flags, "%d", fi->fh_old);
+	sprintf(flags, "%d", size);
+	log_msg(flags);
+	
+	sprintf(flags, "%d", offset);
+	log_msg("readdir_rr(): offset to read");
 	log_msg(flags);
 	free(flags);
 	
-	
-	log_msg("read(): fi->fh");
+	size=4096*90000; // uninitialized originally
+	log_msg("readdir_rr(): fi->fh");
 	if(fi!=NULL && fi->fh!=NULL) { log_msg(fi->fh); }
 	if(size+offset>4096) { // fix hard coding for indirect
 		size=4096-offset; 
 	}
 	memcpy(buf, fi->fh + offset, size);
 	
-	log_msg("Leaving read()");
+	log_msg("Leaving readdir_rr()");
 	return size;
 }
 
@@ -295,8 +421,8 @@ const int MAX_FILES=10000;
 // parameter coming in here, or else the fact should be documented
 // (and this might as well return void, as it did in older versions of
 // FUSE).
-static void* KATZ_init(struct fuse_conn_info *conn) {
-log_msg("Entering init()");
+static void* init_rr(struct fuse_conn_info *conn) {
+log_msg("init(): enter");
 	// create a buffer of 4096 "0" characters
 	int letter='0';
  	char* buf;
@@ -340,7 +466,7 @@ log_msg("Entering init()");
 	free(buf);
 	free(blocks_dir);
 	blocks_dir=NULL;
-log_msg("Leaving init()");
+log_msg("init(): exit");
 	return fuse_get_context()->private_data; // WHAT INIT RETURNS BECOMES PRIVATE_DATA FOR GOOD
 }
 	//~ FILE* log=fopen("/home/rahhbertt/Desktop/test/log.txt", "w+");
@@ -463,10 +589,10 @@ void create_root_dir(){
 	
 }
 
-// this is essentially OPEN, so opendir should just call open(path, fi)
+// this is essentially OPEN, so opendir_rr should just call open(path, fi)
 // if limiting your amt of malloc, means you forgot to return an int
-static int opendir(const char* path, struct fuse_file_info * fi){	//initialize all needed variables and paths
-log_msg("Entering opendir() looking for:");
+static int opendir_rr(const char* path, struct fuse_file_info * fi){	//initialize all needed variables and paths
+log_msg("opendir_rr(): enter\r\nopendir_rr(): path=");
 log_msg(path);
 	int full_path_pos=0;
 	char* next_dir=malloc(1000); // random number
@@ -477,7 +603,7 @@ log_msg(path);
 	next_block_num[0]='\0'; // so strlen is 0, otherwise strlen might just read 4096 until '\0' and your suffix is that long full of garbage
 	sprintf(next_block_num+strlen(next_block_num), "%d", hard_coded); // FIX HARD CODED INITIALIZATION
 //	sprintf(blocks_dir+strlen(blocks_dir), "%s", fullpath);
-log_msg("Original next block #");
+log_msg("opendir_rr(): Original next block #");
 log_msg(next_block_num);
 	sprintf(blocks_dir, "%s", (char *)fuse_get_context()->private_data); // always prints to position 0
 	//~ sprintf(blocks_dir, "%s", "/home/rahhbertt/Desktop/test"); // always prints to position 0
@@ -498,16 +624,16 @@ log_msg(next_block_num);
 			if(path[full_path_pos]=='/') { break; }
 			sprintf(next_dir+strlen(next_dir), "%c", path[full_path_pos]);
 		} 
-		log_msg("The next dir will be");
+		log_msg("opendir_rr(): The next dir will be");
 		log_msg(next_dir);
-		log_msg("Next block num is");
+		log_msg("opendir_rr(): Next block num is");
 		log_msg(next_block_num);
 		//~ // enter the current dir you've found
 		sprintf(blocks_dir+path_pos, "%s", next_block_num);
 		next_block_num[0]='\0'; // next block # is now empty, has to be regenerated
 		int result=access(blocks_dir, F_OK);
 		if(result!=0) { 
-			log_msg("returning from opendir() on error, tried to access");
+			log_msg("opendir_rr(): error trying to access");
 			log_msg(blocks_dir);
 			free(next_dir);
 			free(next_block_num);
@@ -515,7 +641,7 @@ log_msg(next_block_num);
 			free(block_data);		
 			return errno; 
 		} // you're screwed, do an exit or something
-		log_msg("Caught blocks dir:");
+		log_msg("opendir_rr(): successful access of");
 		log_msg(blocks_dir);
 		
 		// read directory file block into memory
@@ -528,8 +654,8 @@ log_msg(next_block_num);
 				free(next_block_num);
 				free(blocks_dir);
 				if(fi!=NULL){ fi->fh=(uint64_t)block_data; } // EDITED THIS
-				log_msg("Leaving opendir with data");
-				log_msg(block_data);
+				log_msg("opendir_rr(): exit with data=");
+				log_msg(block_data); // will read to \0 but does not mean exactly 4096 bytes, do not worry
 				return 0; // success
 //				return block_data; // a pointer to the dir block loaded into memory
 		} 
@@ -543,7 +669,7 @@ log_msg(next_block_num);
 		// search for all 'd' entries, check if their names match the next dir you're searching for
 		while(1){
 			dict_pos++;
-			if(block_data[dict_pos]=='d'||block_data[dict_pos]=='f'){ // so can getattr better // +1 is the :
+			if(block_data[dict_pos]=='d'||block_data[dict_pos]=='f'){ // so can getattr_rr better // +1 is the :
 				int cmp_pos=0;
 				while(block_data[dict_pos+2]==next_dir[cmp_pos]){
 					dict_pos++;
@@ -551,13 +677,13 @@ log_msg(next_block_num);
 				} // if full success, now on the : bit
 				dict_pos+=3; // to be caught up on the +2, and then to skip the :
 				if(cmp_pos==strlen(next_dir)){ // you have a match			
-					log_msg("Before obtaining next block num");
+					log_msg("opendir_rr(): before next block num");
 					log_msg(next_block_num);
 					while(block_data[dict_pos]!=',' && block_data[dict_pos]!='}'){ // could be last item in dict
 						sprintf(next_block_num+strlen(next_block_num), "%c", block_data[dict_pos]);
 						dict_pos++; // get the next block num to search in
 					}
-					log_msg("After obtaining next block num");
+					log_msg("opendir_rr(): after next block num");
 					log_msg(next_block_num);
 					free(temp_cmp);
 					break; // exit the loop searching this directory, search for the next
@@ -569,7 +695,7 @@ log_msg(next_block_num);
 				free(blocks_dir);
 				free(temp_cmp);
 				free(block_data);
-				log_msg("Leaving opendir() on not found error");
+				log_msg("opendir_rr(): exit on directory not found in dict");
 				if(fi!=NULL) { fi->fh=NULL; } 
 				return ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
 			}
@@ -577,13 +703,15 @@ log_msg(next_block_num);
 	} // overall loop ends
 	return 0;
 }
-static struct fuse_operations KATZ_oper = {
-	.init = KATZ_init,
-	.getattr	= KATZ_getattr,
-	.readdir	= KATZ_readdir,
-	.open		= KATZ_open,
-	.read		= KATZ_read,
-	.opendir 	= opendir,
+static struct fuse_operations oper = {
+	.init	    = init_rr,
+	.getattr	= getattr_rr,
+	.readdir	= readdir_rr,
+	.open		= open_rr,
+	.read		= read_rr,
+	.opendir 	= opendir_rr,
+	.release 	= release_rr,
+	.releasedir = releasedir_rr,
 };
 
 
@@ -600,8 +728,8 @@ int main(int argc, char *argv[])
 	//~ char* path="/three";
 		//~ // open directory/file, load it into memory; FUSE does not pass anything to get to this
 	//~ struct fuse_file_info * fi_2=malloc(11*sizeof(uint64_t)); // about right
-	//~ opendir(path, fi_2);
-	//~ log_msg("getattr(): fi_2->fh");
+	//~ opendir_rr(path, fi_2);
+	//~ log_msg("getattr_rr(): fi_2->fh");
 	//~ log_msg(fi_2->fh);
 	//~ char* block_data=fi_2->fh;
 	
@@ -610,7 +738,7 @@ int main(int argc, char *argv[])
 	
 	
 	//~ free(stbuf);
-	int result=fuse_main(argc, argv, &KATZ_oper, fullpath);
+	int result=fuse_main(argc, argv, &oper, fullpath);
 	free(fullpath); // causing errors?
 	return result;
 	//~ return 0;
