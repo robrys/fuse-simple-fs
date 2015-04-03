@@ -766,10 +766,13 @@ int remove_free_block(int rm_block){
 					
 					// implement this
 					
+					// NOTE: fusedata.3 removed values 800-811 for testing, should fix that
+					// appended appropriate # of zeros at end, so keep total bytes to 4096
 					
 					
-					
-					
+					// also test this by putting a ',0' after the # we'll be removing (at the start)
+					// test this be doing the same thing, but burying the number in the middle of the free
+					// block block
 					
 					// redo the while not , or 0 to account for
 					// file_pos ++ after hit a ,
