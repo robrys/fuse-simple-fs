@@ -19,11 +19,13 @@ static const char *KATZ_path = "/KATZz";
 fusermount -u ~/Desktop/test/m; gcc -Wall -g ~/Desktop/test/os.c `pkg-config fuse --cflags --libs` -o OS_hw; ./OS_hw ./m; ls -al m
 
 */
+static int opendir(const char* path, struct fuse_file_info * fi);
+
 void log_msg(const char* msg){
 	//~ int result=access("/home/rahhbertt/Desktop/test/logs.txt", F_OK);
 	//~ if(result==0){
 		FILE* fh=fopen("/home/rahhbertt/Desktop/test/logs.txt", "a");
-		fwrite(msg, strlen(msg), 1, fh);
+		if(msg!=NULL) { fwrite(msg, strlen(msg), 1, fh); }
 		fwrite("\r\n", 2, 1, fh);
 		fwrite("\r\n", 2, 1, fh);
 		fwrite("\r\n", 2, 1, fh);
@@ -35,24 +37,99 @@ static int KATZ_getattr(const char *path, struct stat *stbuf) {
 	int res = 0;
 log_msg("Entering getattr() for path:");
 log_msg(path);
-	memset(stbuf, 0, sizeof(struct stat));
-	if (strcmp(path, "/") == 0) {
-		stbuf->st_mode = S_IFDIR | 0755;
-		stbuf->st_nlink = 2;
-	} else if (strcmp(path, KATZ_path) == 0) {
-		stbuf->st_mode = S_IFREG | 0444;
-		stbuf->st_nlink = 1;
-		stbuf->st_size = strlen(KATZ_str);
-	} else if (strcmp(path, "/testing") == 0){ 
-		stbuf->st_mode = S_IFREG | 0444;
-		stbuf->st_nlink = 1;
-		stbuf->st_size = strlen("ht there")-3;
-	} else if(strcmp(path, "/fusedata.0") == 0) {
-		stbuf->st_mode = S_IFREG | 0444;
-		stbuf->st_nlink = 1;
-		stbuf->st_size = strlen("ht there")-3;
-	} else 
-		res = -ENOENT;
+	memset(stbuf, 0, sizeof(struct stat)); // so if field left empty, its '0' not garbage
+
+	// no dir passed in, no chance to do otherwise
+	// now for every getattr have to recursively find the dir, then the block #
+	// then load the file into memory
+	// then load up the stbuf
+	
+	// open directory/file, load it into memory; FUSE does not pass anything to get to this
+	struct fuse_file_info * fi_2=malloc(11*sizeof(uint64_t)); // about right
+	opendir(path, fi_2);
+	if(fi_2->fh==NULL){
+		log_msg("getattr(): fi_2->fh==NULL");
+		return 0; 
+	}
+	log_msg("getattr(): fi_2->fh");
+	log_msg(fi_2->fh);
+	char *block_data=fi_2->fh;
+	// load up attributes
+	// once get to fifth field, if first letter = l its a file, if it =a, its a dir
+	
+	// load up attributes
+	// once get to fifth field, if first letter = l its a file, if it =a, its a dir
+	int field_count=1; // first field
+	int data_pos=0; // skip the {size:
+	int field_start_ch=0;
+	char* current_field=malloc(1000); //
+	current_field[0]='\0'; // strlen =0;
+	while(1){
+		data_pos++; // so skip { at start, and so field starts at byte after the ','
+		field_start_ch=data_pos;
+		while(block_data[data_pos]!=':'&& data_pos<4096){ data_pos++; }
+		data_pos++; // move past ':'
+		while(block_data[data_pos]!=',' && data_pos<4096){
+			sprintf(current_field+strlen(current_field), "%c", block_data[data_pos]);
+			data_pos++;
+		}
+		if(field_count==1){ stbuf->st_size=atoi(current_field); }
+		else if(field_count==2) { stbuf->st_uid=atoi(current_field); }
+		else if(field_count==3) { stbuf->st_gid=atoi(current_field); }
+		else if(field_count==4) { stbuf->st_mode=atoi(current_field); }
+		else if(field_count==5) { 
+			if(block_data[field_start_ch]=='l'){ stbuf->st_nlink=atoi(current_field); } // reg file
+			else if(block_data[field_start_ch]=='a') { stbuf->st_atime=atoi(current_field); }
+		}
+		else if(field_count==6) { 
+			if(block_data[field_start_ch]=='a'){ stbuf->st_atime=atoi(current_field); } // reg file
+			else if(block_data[field_start_ch]=='c') { stbuf->st_ctime=atoi(current_field); }
+		}
+		else if(field_count==7) { 
+			if(block_data[field_start_ch]=='c'){ stbuf->st_ctime=atoi(current_field); } // reg file
+			else if(block_data[field_start_ch]=='m') { stbuf->st_mtime=atoi(current_field); }
+		}
+		else if(field_count==8) { 
+			if(block_data[field_start_ch]=='m'){ stbuf->st_mtime=atoi(current_field); } // reg file
+			else if(block_data[field_start_ch]=='l') { stbuf->st_nlink=atoi(current_field); }
+		}
+		else { break; } // reached the end
+		field_count++;
+		log_msg("getattr(): current field");
+		log_msg(current_field);
+		log_msg("getattr(): field_start_ch");
+		char * one=malloc(4);
+		sprintf(one, "%c", block_data[field_start_ch]);
+		log_msg(one);
+		free(one);
+		
+		current_field[0]='\0'; // empty the string
+	}
+	free(current_field);
+	
+	// a call to getattr ".." actually is not in your mount point
+	// hence gets called to the usual getattr() of ext4
+	//~ if (strcmp(path, "/") == 0) {
+		//~ stbuf->st_mode = S_IFDIR | 0755;
+		//~ stbuf->st_nlink = 2;
+	//~ } else if (strcmp(path, KATZ_path) == 0) {
+		//~ stbuf->st_mode = S_IFREG | 0444;
+		//~ stbuf->st_nlink = 1;
+		//~ stbuf->st_size = strlen(KATZ_str);
+	//~ } else if (strcmp(path, "/testing") == 0){ 
+		//~ stbuf->st_mode = S_IFREG | 0444;
+		//~ stbuf->st_nlink = 1;
+		//~ stbuf->st_size = strlen("ht there")-3;
+	//~ } else if(strcmp(path, "/fusedata.0") == 0) {
+		//~ stbuf->st_mode = S_IFREG | 0444;
+		//~ stbuf->st_nlink = 1;
+		//~ stbuf->st_size = strlen("ht there")-3;
+	//~ } else if(strcmp(path, "/two") == 0 || strcmp(path, "/three")==0) {
+		//~ stbuf->st_mode = S_IFREG | 0444;
+		//~ stbuf->st_nlink = 1;
+		//~ stbuf->st_size = 25;;
+	//~ } else 
+		//~ res = -ENOENT;
 // this puts the file attributes you wan to show into the stat buffer
 // so ls can output it to the screen from there
 // this does not MAKE the file
@@ -61,51 +138,45 @@ log_msg("Leaving getattr()");
 }
 
 static int KATZ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
-// call open dir in here to get a pointer to data, and then call closedir/free the data?
-log_msg("readdir(): path=");
-log_msg(path);
-	//~ if (strcmp(path, "/") != 0)
-		//~ return -ENOENT;
-	//~ char * dir_data=malloc(50);
-	//~ strncpy(dir_data, (char *)fi->fh, 50);
-	//~ filler(buf, ".", NULL, 0);
-	//~ filler(buf, "..", NULL, 0);
-	//~ filler(buf, KATZ_path + 1, NULL, 0);
-	//~ filler(buf, "/testing" + 1, NULL, 0);
-	//~ filler(buf, "/fusedata.0" +1, NULL, 0);
-
+	log_msg("readdir(): path=");
+	log_msg(path);
 	
-		// gives you the path to the dir the file is in
+	// the loaded directory inode
 	char* block_data=fi->fh;
 	if(fi->fh==NULL) { 
-		log_msg("readdir(): fi->fh==NULL");
+		log_msg("\treaddir(): fi->fh==NULL");
 		return 0; 
-	} // some serious problems
+	} // call open dir in here to get a pointer to data, and then call closedir/free the data?
+
+	// set up memory for current_entry
+	
 	char* current_entry=malloc(1000); // FIX HARD CODING
-	strcpy(current_entry, path);	
-	//~ if(block_data==NULL){ 
-		//~ 
-	//~ } // errors
+	current_entry[0]='\0';
+	//strcpy(current_entry, path);	
+	if(current_entry[strlen(current_entry)-1]!='/'){ sprintf(current_entry+strlen(current_entry), "%c", '/'); } // append a / if none there
+	int path_pos=strlen(current_entry);
+	// loop until find dictionary
 	int dict_pos=1;
 	while(1){
 		dict_pos++;
 		if(block_data[dict_pos]=='{'){ break;}
 	}
 	dict_pos+=3; // 1 to "d", 1 to ":", 1 to file name start
+	
+	// loop through reading each entry into fuse's "buf", return when done
 	while(1){
 		while(block_data[dict_pos]!=':' && dict_pos < 4096){ // to be safe, FIX HARD CODING 
 			sprintf(current_entry+strlen(current_entry), "%c", block_data[dict_pos]);
 			dict_pos++; 
 		}
-		
-		filler(buf, current_entry +1, NULL, 0);
+		filler(buf, current_entry +1, NULL, 0); // was only giving me 1 char since overwrote [0] to \0, got rid of the "/"
 		log_msg("readdir(): current_entry=");
 		log_msg(current_entry);
 		
-		current_entry[0]='\0'; // str is now "empty"
-
+		current_entry[path_pos]='\0'; // str is now "empty"
+	
+		// skip until next entry begins or end of dict
 		while( (block_data[dict_pos]!=',' && block_data[dict_pos]!='}') && dict_pos < 4096 ){ dict_pos++;}
-		// could be last entry
 		if(block_data[dict_pos]==','){ dict_pos+=3; } // advance past those 3 chars ',' 'd' ':'
 		else if(block_data[dict_pos]=='}'){ 
 			free(current_entry); // one point of exit
@@ -118,25 +189,6 @@ log_msg(path);
 			return 0; 
 		} // serious error
 	}
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	//~ filler(buf, dir_data +1, NULL, 0);
-// the +1 is needed
-// this just shows entries here for each file
-// you're telling it the name of each file to show an entry for
-// this does not CREATE any entries
-
-// delete fi->fh here to free up memory
-// readdir concludes its life cycle
-log_msg("Leaving readdir()");
-	return 0;
 }
 
 
@@ -145,17 +197,26 @@ static int KATZ_open(const char *path, struct fuse_file_info *fi) {
 // for every file here needs to check strcmp is okay
 	log_msg("Entering open() for path:");
 log_msg(path);
-	if (strcmp(path, KATZ_path) != 0 && strcmp(path, "/testing") !=0 && strcmp(path, "/fusedata.0")  !=0)
-		return -ENOENT;
 
-	if ((fi->flags & 3) != O_RDONLY)
-		return -EACCES;
+	//~ if (strcmp(path, KATZ_path) != 0 && strcmp(path, "/testing") !=0 && strcmp(path, "/fusedata.0")  !=0)
+		//~ return -ENOENT;
+//~ 
+	//~ if ((fi->flags & 3) != O_RDONLY)
+		//~ return -EACCES;
+		//~ 
+		
+		// how and when to handle indirect?
+	opendir(path, fi); // this just gets you the inode
+	log_msg("open(): fi="); // maybe READ and write should handle indirects?
+	if(fi->fh != NULL){ log_msg(fi->fh); }
+	else { log_msg("fi->fh==NULL"); }	
+		
 	log_msg("Leaving open()");
 	return 0;
 }
 
 static int KATZ_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
- 		log_msg("Entering read() for path:");
+ log_msg("Entering read() for path:");
 log_msg(path);
  	
  	const char* KATZ_strz="ht there";
@@ -187,10 +248,6 @@ void free_block_list();
 void create_root_dir();
 const int FILE_SIZE=4096;
 const int MAX_FILES=10000;
-struct reg_file{
-	int used_size;
-	char* data;
-};
 // Undocumented but extraordinarily useful fact:  the fuse_context is
 // set up before this function is called, and
 // fuse_get_context()->private_data returns the user_data passed to
@@ -366,6 +423,7 @@ void create_root_dir(){
 	
 }
 
+// this is essentially OPEN, so opendir should just call open(path, fi)
 // if limiting your amt of malloc, means you forgot to return an int
 static int opendir(const char* path, struct fuse_file_info * fi){	//initialize all needed variables and paths
 log_msg("Entering opendir() looking for:");
@@ -382,6 +440,8 @@ log_msg(path);
 log_msg("Original next block #");
 log_msg(next_block_num);
 	sprintf(blocks_dir, "%s", (char *)fuse_get_context()->private_data); // always prints to position 0
+	//~ sprintf(blocks_dir, "%s", "/home/rahhbertt/Desktop/test"); // always prints to position 0
+	
 	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/blocks/fusedata.");	
 	int path_pos=strlen(blocks_dir);
 	while(1){
@@ -443,7 +503,7 @@ log_msg(next_block_num);
 		// search for all 'd' entries, check if their names match the next dir you're searching for
 		while(1){
 			dict_pos++;
-			if(block_data[dict_pos]=='d'){ // +1 is the :
+			if(block_data[dict_pos]=='d'||block_data[dict_pos]=='f'){ // so can getattr better // +1 is the :
 				int cmp_pos=0;
 				while(block_data[dict_pos+2]==next_dir[cmp_pos]){
 					dict_pos++;
@@ -469,7 +529,7 @@ log_msg(next_block_num);
 				free(blocks_dir);
 				free(temp_cmp);
 				free(block_data);
-				log_msg("Leaving opendir() on error");
+				log_msg("Leaving opendir() on not found error");
 				return ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
 			}
 		}
@@ -490,57 +550,27 @@ int main(int argc, char *argv[])
 {
 	char* fullpath = malloc(1000);
 	fullpath=getcwd(fullpath, 1000); // max limit on CWD
+	
 	printf("\n\n\nTesting\n%s\n\n", fullpath);
-	
-	
-	//~ char* path="/";
-	//~ char* block_data=malloc(5096);
-	//~ FILE* fd=fopen("/home/rahhbertt/Desktop/test/blocks/fusedata.26", "r+");
-	//~ fread(block_data, 4096, 1, fd); // FIX HARD CODING
-	//~ fclose(fd); // reads to block_data[0] as start
-	
-	
-	//~ // gives you the path to the dir the file is in
-	//~ char* current_entry=malloc(1000); // FIX HARD CODING
-	//~ //current_entry[0]='\0'; // strlen = 0
-	//~ strcpy(current_entry, path);	
-	//~ if(block_data==NULL){ 
-		//~ 
-	//~ } // errors
-	//~ int dict_pos=1;
-	//~ while(1){
-		//~ dict_pos++;
-		//~ if(block_data[dict_pos]=='{'){ break;}
-	//~ }
-	//~ dict_pos+=3; // 1 to "d", 1 to ":", 1 to file name start
-	//~ while(1){
-		//~ while(block_data[dict_pos]!=':' && dict_pos < 4096){ // to be safe, FIX HARD CODING 
-			//~ sprintf(current_entry+strlen(current_entry), "%c", block_data[dict_pos]);
-			//~ dict_pos++; 
-		//~ }
-//~ 
-		//~ filler(buf, "/fusedata.0" +1, NULL, 0);
-		//~ current_entry[0]='\0'; // str is now "empty"
-//~ 
-		//~ while( (block_data[dict_pos]!=',' && block_data[dict_pos]!='}') && dict_pos < 4096 ){ // could be last
-			//~ dict_pos++;
-		//~ }
-		//~ if(block_data[dict_pos]==','){
-			//~ dict_pos+=3; // advance past those 3 chars ',' 'd' ':'
-		//~ }
-		//~ else if(block_data[dict_pos]=='}'){ 
-			//~ free(current_entry); // one point of exit
-			//~ return 0; // you've read the dictionary
-		//~ }
-		//~ if(dict_pos>=4096){ return 0; } // serious error
-	//~ }
-	// call release dir?
-	
 
 
+	//~ struct stat *stbuf=malloc(sizeof(stbuf));
+	//~ 
+	//~ char* path="/three";
+		//~ // open directory/file, load it into memory; FUSE does not pass anything to get to this
+	//~ struct fuse_file_info * fi_2=malloc(11*sizeof(uint64_t)); // about right
+	//~ opendir(path, fi_2);
+	//~ log_msg("getattr(): fi_2->fh");
+	//~ log_msg(fi_2->fh);
+	//~ char* block_data=fi_2->fh;
+	
 
+	
+	
+	
+	//~ free(stbuf);
 	int result=fuse_main(argc, argv, &KATZ_oper, fullpath);
-	//~ free(fullpath); // causing errors?
+	free(fullpath); // causing errors?
 	return result;
 	//~ return 0;
 } // for ADDING to free block list, just add to the end of it, read until hit double comma or zero or whatever
