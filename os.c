@@ -61,20 +61,72 @@ log_msg("Leaving getattr()");
 }
 
 static int KATZ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
-	(void) offset;
-	(void) fi;
 // call open dir in here to get a pointer to data, and then call closedir/free the data?
-log_msg("Entering readdir() for path:");
+log_msg("readdir(): path=");
 log_msg(path);
-	if (strcmp(path, "/") != 0)
-		return -ENOENT;
+	//~ if (strcmp(path, "/") != 0)
+		//~ return -ENOENT;
 	//~ char * dir_data=malloc(50);
 	//~ strncpy(dir_data, (char *)fi->fh, 50);
-	filler(buf, ".", NULL, 0);
-	filler(buf, "..", NULL, 0);
-	filler(buf, KATZ_path + 1, NULL, 0);
-	filler(buf, "/testing" + 1, NULL, 0);
-	filler(buf, "/fusedata.0" +1, NULL, 0);
+	//~ filler(buf, ".", NULL, 0);
+	//~ filler(buf, "..", NULL, 0);
+	//~ filler(buf, KATZ_path + 1, NULL, 0);
+	//~ filler(buf, "/testing" + 1, NULL, 0);
+	//~ filler(buf, "/fusedata.0" +1, NULL, 0);
+
+	
+		// gives you the path to the dir the file is in
+	char* block_data=fi->fh;
+	if(fi->fh==NULL) { 
+		log_msg("readdir(): fi->fh==NULL");
+		return 0; 
+	} // some serious problems
+	char* current_entry=malloc(1000); // FIX HARD CODING
+	strcpy(current_entry, path);	
+	//~ if(block_data==NULL){ 
+		//~ 
+	//~ } // errors
+	int dict_pos=1;
+	while(1){
+		dict_pos++;
+		if(block_data[dict_pos]=='{'){ break;}
+	}
+	dict_pos+=3; // 1 to "d", 1 to ":", 1 to file name start
+	while(1){
+		while(block_data[dict_pos]!=':' && dict_pos < 4096){ // to be safe, FIX HARD CODING 
+			sprintf(current_entry+strlen(current_entry), "%c", block_data[dict_pos]);
+			dict_pos++; 
+		}
+		
+		filler(buf, current_entry +1, NULL, 0);
+		log_msg("readdir(): current_entry=");
+		log_msg(current_entry);
+		
+		current_entry[0]='\0'; // str is now "empty"
+
+		while( (block_data[dict_pos]!=',' && block_data[dict_pos]!='}') && dict_pos < 4096 ){ dict_pos++;}
+		// could be last entry
+		if(block_data[dict_pos]==','){ dict_pos+=3; } // advance past those 3 chars ',' 'd' ':'
+		else if(block_data[dict_pos]=='}'){ 
+			free(current_entry); // one point of exit
+			log_msg("readdir(): end of dict");
+			return 0; // you've read the dictionary
+		}
+		if(dict_pos>=4096){ 
+			free(current_entry);
+			log_msg("readdir(): exceeded 4096");
+			return 0; 
+		} // serious error
+	}
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	//~ filler(buf, dir_data +1, NULL, 0);
 // the +1 is needed
 // this just shows entries here for each file
@@ -375,7 +427,7 @@ log_msg(next_block_num);
 				free(next_dir);
 				free(next_block_num);
 				free(blocks_dir);
-				fi->fh=(uint64_t)block_data;
+				if(fi!=NULL){ fi->fh=(uint64_t)block_data; } // EDITED THIS
 				log_msg("Leaving opendir with data");
 				log_msg(block_data);
 				return 0; // success
@@ -440,7 +492,50 @@ int main(int argc, char *argv[])
 	fullpath=getcwd(fullpath, 1000); // max limit on CWD
 	printf("\n\n\nTesting\n%s\n\n", fullpath);
 	
-	//~ char* path="/../../.";
+	
+	//~ char* path="/";
+	//~ char* block_data=malloc(5096);
+	//~ FILE* fd=fopen("/home/rahhbertt/Desktop/test/blocks/fusedata.26", "r+");
+	//~ fread(block_data, 4096, 1, fd); // FIX HARD CODING
+	//~ fclose(fd); // reads to block_data[0] as start
+	
+	
+	//~ // gives you the path to the dir the file is in
+	//~ char* current_entry=malloc(1000); // FIX HARD CODING
+	//~ //current_entry[0]='\0'; // strlen = 0
+	//~ strcpy(current_entry, path);	
+	//~ if(block_data==NULL){ 
+		//~ 
+	//~ } // errors
+	//~ int dict_pos=1;
+	//~ while(1){
+		//~ dict_pos++;
+		//~ if(block_data[dict_pos]=='{'){ break;}
+	//~ }
+	//~ dict_pos+=3; // 1 to "d", 1 to ":", 1 to file name start
+	//~ while(1){
+		//~ while(block_data[dict_pos]!=':' && dict_pos < 4096){ // to be safe, FIX HARD CODING 
+			//~ sprintf(current_entry+strlen(current_entry), "%c", block_data[dict_pos]);
+			//~ dict_pos++; 
+		//~ }
+//~ 
+		//~ filler(buf, "/fusedata.0" +1, NULL, 0);
+		//~ current_entry[0]='\0'; // str is now "empty"
+//~ 
+		//~ while( (block_data[dict_pos]!=',' && block_data[dict_pos]!='}') && dict_pos < 4096 ){ // could be last
+			//~ dict_pos++;
+		//~ }
+		//~ if(block_data[dict_pos]==','){
+			//~ dict_pos+=3; // advance past those 3 chars ',' 'd' ':'
+		//~ }
+		//~ else if(block_data[dict_pos]=='}'){ 
+			//~ free(current_entry); // one point of exit
+			//~ return 0; // you've read the dictionary
+		//~ }
+		//~ if(dict_pos>=4096){ return 0; } // serious error
+	//~ }
+	// call release dir?
+	
 
 
 
