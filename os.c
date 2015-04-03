@@ -386,25 +386,26 @@ log_msg(path);
 	// size is uninitialzied, it wants you to read the whole file
 	
 	
-	log_msg("readdir_rr(): size to read");
+	log_msg("read_rr(): size to read");
 	char* flags=malloc(100); // fix hard coding
 	sprintf(flags, "%d", size);
 	log_msg(flags);
 	
 	sprintf(flags, "%d", offset);
-	log_msg("readdir_rr(): offset to read");
+	log_msg("read_rr(): offset to read");
 	log_msg(flags);
 	free(flags);
 	
-	size=4096*90000; // uninitialized originally
-	log_msg("readdir_rr(): fi->fh");
+	size=4096*2; // originally 4096 for whatever reason
+	log_msg("read_rr(): fi->fh");
 	if(fi!=NULL && fi->fh!=NULL) { log_msg(fi->fh); }
-	if(size+offset>4096) { // fix hard coding for indirect
-		size=4096-offset; 
-	}
+	//~ if(size+offset>4096) { // fix hard coding for indirect
+		//~ size=4096-offset; 
+	//~ }
 	memcpy(buf, fi->fh + offset, size);
-	
-	log_msg("Leaving readdir_rr()");
+	log_msg("read_rr(): buf=");
+	log_msg(buf);
+	log_msg("readdir_rr(): exit");
 	return size;
 }
 
