@@ -11,8 +11,6 @@
 
 #include <unistd.h> // is this okay, just to get cwd, and access
 #include <time.h> // for UNIX time
-static const char *KATZ_str ="hi";
-static const char *KATZ_path = "/KATZz";
 
 /*
 
@@ -22,15 +20,12 @@ fusermount -u ~/Desktop/test/m; gcc -Wall -g ~/Desktop/test/os.c `pkg-config fus
 static int opendir(const char* path, struct fuse_file_info * fi);
 
 void log_msg(const char* msg){
-	//~ int result=access("/home/rahhbertt/Desktop/test/logs.txt", F_OK);
-	//~ if(result==0){
-		FILE* fh=fopen("/home/rahhbertt/Desktop/test/logs.txt", "a");
-		if(msg!=NULL) { fwrite(msg, strlen(msg), 1, fh); }
-		fwrite("\r\n", 2, 1, fh);
-		fwrite("\r\n", 2, 1, fh);
-		fwrite("\r\n", 2, 1, fh);
-		fclose(fh);
-	//~ }
+	FILE* fh=fopen("/home/rahhbertt/Desktop/test/logs.txt", "a");
+	if(msg!=NULL) { fwrite(msg, strlen(msg), 1, fh); }
+	fwrite("\r\n", 2, 1, fh);
+	fwrite("\r\n", 2, 1, fh);
+	fwrite("\r\n", 2, 1, fh);
+	fclose(fh);
 }
 
 static int KATZ_getattr(const char *path, struct stat *stbuf) {
@@ -106,30 +101,7 @@ log_msg(path);
 		current_field[0]='\0'; // empty the string
 	}
 	free(current_field);
-	
-	// a call to getattr ".." actually is not in your mount point
-	// hence gets called to the usual getattr() of ext4
-	//~ if (strcmp(path, "/") == 0) {
-		//~ stbuf->st_mode = S_IFDIR | 0755;
-		//~ stbuf->st_nlink = 2;
-	//~ } else if (strcmp(path, KATZ_path) == 0) {
-		//~ stbuf->st_mode = S_IFREG | 0444;
-		//~ stbuf->st_nlink = 1;
-		//~ stbuf->st_size = strlen(KATZ_str);
-	//~ } else if (strcmp(path, "/testing") == 0){ 
-		//~ stbuf->st_mode = S_IFREG | 0444;
-		//~ stbuf->st_nlink = 1;
-		//~ stbuf->st_size = strlen("ht there")-3;
-	//~ } else if(strcmp(path, "/fusedata.0") == 0) {
-		//~ stbuf->st_mode = S_IFREG | 0444;
-		//~ stbuf->st_nlink = 1;
-		//~ stbuf->st_size = strlen("ht there")-3;
-	//~ } else if(strcmp(path, "/two") == 0 || strcmp(path, "/three")==0) {
-		//~ stbuf->st_mode = S_IFREG | 0444;
-		//~ stbuf->st_nlink = 1;
-		//~ stbuf->st_size = 25;;
-	//~ } else 
-		//~ res = -ENOENT;
+	free(fi_2);
 // this puts the file attributes you wan to show into the stat buffer
 // so ls can output it to the screen from there
 // this does not MAKE the file
@@ -191,12 +163,11 @@ static int KATZ_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off
 	}
 }
 
-
-
 static int KATZ_open(const char *path, struct fuse_file_info *fi) {
 // for every file here needs to check strcmp is okay
 	log_msg("Entering open() for path:");
 log_msg(path);
+// clean up the fi->fh on release
 
 	//~ if (strcmp(path, KATZ_path) != 0 && strcmp(path, "/testing") !=0 && strcmp(path, "/fusedata.0")  !=0)
 		//~ return -ENOENT;
@@ -210,35 +181,104 @@ log_msg(path);
 	log_msg("open(): fi="); // maybe READ and write should handle indirects?
 	if(fi->fh != NULL){ log_msg(fi->fh); }
 	else { log_msg("fi->fh==NULL"); }	
-		
+	char* block_data=fi->fh;
+	
+	char* file_size=malloc(100); // FIX HARD CODING
+	file_size[0]='\0'; // strlen =0
+	int loc_pos=1;
+	while(block_data[loc_pos-1]!=':') { loc_pos++; } // get file size
+	while(block_data[loc_pos]!=',') { 
+		sprintf(file_size+strlen(file_size), "%c", block_data[loc_pos]);
+		loc_pos++;
+		log_msg("open(): file_size building");
+		log_msg(file_size);
+	}
+	// check if fi = null?
+	fi->fh_old=file_size;
+	log_msg("open(): fi->fh_old");
+	file_size[0]='\0';
+	sprintf(file_size, "%s", fi->fh_old);
+	log_msg(file_size);
+	free(file_size);
+	
+	
+	
+	while(block_data[loc_pos]!='l' || block_data[loc_pos+1] !='o' || block_data[loc_pos+2] !='c'){ loc_pos++; }
+	char * log=malloc(10);
+	sprintf(log, "%d", loc_pos);
+	log_msg("open(): loc_pos=");
+	log_msg(log);
+	//l, o, c, a, t, i, o, n, :
+	while(block_data[loc_pos-1]!=':'){ loc_pos++; } // get to first char after :
+	char* location=malloc(100); // FIX HARD CODING
+	location[0]='\0'; // strlen =0
+	while(block_data[loc_pos]!='}'){ 
+		sprintf(location+strlen(location), "%c", block_data[loc_pos]); 
+		loc_pos++;
+	} // sprintf adds the null terminator ?
+	char * abs_loc=malloc(1000); // FIX HARD CODING
+	abs_loc[0]='\0'; // to be safe
+	sprintf(abs_loc, "%s", (char *)fuse_get_context()->private_data);
+	sprintf(abs_loc+strlen(abs_loc), "%s", "/blocks/fusedata.");
+	sprintf(abs_loc+strlen(abs_loc), "%s", location);
+	char* file_data=malloc(4096); // multiples here
+	int result=access(abs_loc, F_OK);
+	log_msg("open(): location=");
+	log_msg(abs_loc);
+	if(result==0){
+		log_msg("open() file opened");
+		FILE* fh=fopen(abs_loc, "r");
+		fread(file_data, 4096, 1, fh); // FIX HARD CODING
+		fclose(fh);
+	}
+	log_msg("open(): file_data=");
+	log_msg(file_data);
+	
+	if(fi!=NULL){
+		fi->fh=file_data; 
+	}
+	//~ free(file_data);
+	//~ free(file_size);
+	free(abs_loc);
+	free(location);
 	log_msg("Leaving open()");
 	return 0;
 }
+
+//release(const char* path, struct fuse_file_info *fi)
 
 static int KATZ_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
  log_msg("Entering read() for path:");
 log_msg(path);
  	
- 	const char* KATZ_strz="ht there";
-	size_t len;
-	(void) fi;
-	// for every file here needs to check strcmp is okay
-	if(strcmp(path, KATZ_path) != 0 && strcmp(path, "/testing") !=0 && strcmp(path, "/fusedata.0")  !=0)
-		return -ENOENT;
-
-	if(strcmp(path, "/testing")==0){
-		len = strlen(KATZ_strz);
-	} else {
-		len = strlen(KATZ_str);
+ 	//~ const char* KATZ_strz="ht there";
+	//~ size_t len;
+	//~ (void) fi;
+	//~ // for every file here needs to check strcmp is okay
+	//~ if(strcmp(path, KATZ_path) != 0 && strcmp(path, "/testing") !=0 && strcmp(path, "/fusedata.0")  !=0)
+		//~ return -ENOENT;
+//~ 
+	//~ if(strcmp(path, "/testing")==0){
+		//~ len = strlen(KATZ_strz);
+	//~ } else {
+		//~ len = strlen(KATZ_str);
+	//~ }
+	//~ if (offset < len) {
+	log_msg("read(): fi->flags");
+	char* flags=malloc(100); // fix hard coding
+	sprintf(flags, "%d", fi->fh_old);
+	log_msg(flags);
+	free(flags);
+	
+	
+	log_msg("read(): fi->fh");
+	if(fi!=NULL && fi->fh!=NULL) { log_msg(fi->fh); }
+	if(size+offset>4096) { // fix hard coding for indirect
+		size=4096-offset; 
 	}
-	if (offset < len) {
-		if (offset + size > len)
-			size = len - offset;
-			if((strcmp(path, "/testing")!=0)) { KATZ_strz=KATZ_str; }
-		memcpy(buf, KATZ_strz + offset, size);
-	} else
-		size = 0;
-			log_msg("Leaving read()");
+	memcpy(buf, fi->fh + offset, size);
+	
+	log_msg("Leaving read()");
 	return size;
 }
 
@@ -530,6 +570,7 @@ log_msg(next_block_num);
 				free(temp_cmp);
 				free(block_data);
 				log_msg("Leaving opendir() on not found error");
+				if(fi!=NULL) { fi->fh=NULL; } 
 				return ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
 			}
 		}
