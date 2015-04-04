@@ -606,42 +606,42 @@ void create_root_dir(){
 	 * mode, and then open it.
 	 *
 	 */
-	int create_rr(const char * path, mode_t mode, struct fuse_file_info * fi){
-		// check if exists
-		log_msg("create(): enter\r\ncreate(): path=");
-		log_msg(path);
-		
-		// this doesnt get called when trying to make a file?
-		
-		if(fi==NULL){
-			log_msg("create(): exit on null");
-			return 0;
-		}
-		int result=opendir_rr(path, fi);
-		if(result!=ENOENT){ 
-			log_msg("create(): exit, file already exists/error");
-			return 0;
-		}
-		
-		//~ int free_block=first_free_block();
-		
-		// if not, get parent directoy node
-		// check if enough space to put in file name and not exceed 4096 bytes.
-		// fail if no room left
-		
-		
-		// if not, look up first free block
-		
-		// open that block, get fi->fh as the 4096 bytes
-		
-		// sprintf all the expected values, follow create_root_dir basically, but different field order
-		
-		
-		// needs to check
-		log_msg("create(): exit");
+int create_rr(const char * path, mode_t mode, struct fuse_file_info * fi){
+	// check if exists
+	log_msg("create(): enter\r\ncreate(): path=");
+	log_msg(path);
+	
+	// this doesnt get called when trying to make a file?
+	
+	if(fi==NULL){
+		log_msg("create(): exit on null");
+		return 0;
+	}
+	int result=opendir_rr(path, fi);
+	if(result!=ENOENT){ 
+		log_msg("create(): exit, file already exists/error");
 		return 0;
 	}
 	
+	//~ int free_block=first_free_block();
+	
+	// if not, get parent directoy node
+	// check if enough space to put in file name and not exceed 4096 bytes.
+	// fail if no room left
+	
+	
+	// if not, look up first free block
+	
+	// open that block, get fi->fh as the 4096 bytes
+	
+	// sprintf all the expected values, follow create_root_dir basically, but different field order
+	
+	
+	// needs to check
+	log_msg("create(): exit");
+	return 0;
+}
+
 int mkdir_rr(const char *path, mode_t mode){
 	// check if exists
 	log_msg("mkdir_rr(): enter\r\nmkdir_rr(): path=");
@@ -670,9 +670,14 @@ int mkdir_rr(const char *path, mode_t mode){
 	sprintf(debug, "%d", free_block);
 	log_msg("mkdir_rr(): free_block");
 	log_msg(debug);
-	free(debug);
 	
-	// remove_free_block(free_block);
+	
+	int removed=remove_free_block(free_block);
+	debug[0]='\0';
+	sprintf(debug, "%d", removed);
+	log_msg("mkdir_rr(): removed");
+	log_msg(debug);
+	free(debug);
 	// if not, get parent directoy node
 	// check if enough space to put in file name and not exceed 4096 bytes.
 	// fail if no room left
@@ -735,18 +740,18 @@ int remove_free_block(int rm_block){
 	// simply delete everything, but check if after your comma, if there is a '0'
 	// no # starts with a leading 0, so thats teh signal to leave your comma
 	int current_block_num=1; // hard coded?
-	//~ int first_free=-1;
 	char* full_path=malloc(1000); // definitely hard coded
 	full_path[0]='\0';
 	
 	sprintf(full_path, "%s", fuse_get_context()->private_data);
 	sprintf(full_path+strlen(full_path), "%s", "/blocks/fusedata.");
 	int full_path_pos=strlen(full_path);
+	
 	while(current_block_num < 26) { // fix hard coding
 		sprintf(full_path+full_path_pos, "%d", current_block_num);
 		int result=access(full_path, F_OK);
 		if(result==0){
-			FILE* fh=fopen(full_path, "r");
+			FILE* fh=fopen(full_path, "r+");
 			char* file_data=malloc(4096); // hard coded
 			fread(file_data, 4096, 1, fh); // hard coded
 			
@@ -754,18 +759,41 @@ int remove_free_block(int rm_block){
 			char * current_block_num=malloc(1000); // FIX HARD CODING
 			current_block_num[0]='\0';
 			// search until the last free number
-			while(file_data[file_pos]!=',' || file_data[file_pos+1]!='0'){
+			while(file_pos ==0 || file_data[file_pos-1]!=',' || file_data[file_pos]!='0'){
 				while(file_data[file_pos]!=','){
 					sprintf(current_block_num+strlen(current_block_num), "%c", file_data[file_pos]);
 					file_pos++;
 				}
 				if(atoi(current_block_num)==rm_block){
 					// remove that block, and its comma, only if 0 is not after the comma
+					int bytes_removed=strlen(current_block_num);
+					if(file_data[file_pos+1]!='0'){ // we know filepos is ',', and no leading 0s, so if next is zero that's end of list
+						bytes_removed++; // remove comma unless at the end
+					}
+					fseek(fh,0,SEEK_SET);
+					int written=fwrite(file_data+bytes_removed, 4096-bytes_removed, 1, fh);
+					//~ int written=fwrite(file_data, 4096-4, 1, fh);
 					
+					// somehow detects that you're just shifting, and duplicates last 0s so ahve 4097 bytes???
 					
+					char* debug=malloc(100);
+					sprintf(debug, "%d", written);
+					log_msg("rm_fb(): # file_data written");
+					log_msg(debug);
 					
+					//~ 
+					int letter='3';
+					char* buf;
+					buf=(char *)malloc(bytes_removed); 
+					//~ memset(buf, letter, bytes_removed);
+					//~ 
+					//~ fseek(fh, 0, SEEK_END); // to append # of 0s
+	
+					//~ fwrite(buf, bytes_removed, 1, fh);
+					fclose(fh);
 					// implement this
-					
+					free(file_data);
+					free(buf);
 					// NOTE: fusedata.3 removed values 800-811 for testing, should fix that
 					// appended appropriate # of zeros at end, so keep total bytes to 4096
 					
@@ -783,22 +811,15 @@ int remove_free_block(int rm_block){
 					
 					return 0;
 				}
+				current_block_num[0]='\0'; // strlen =0, so can compare next blcok #
 				file_pos++; // move past the ,
 			}
-			if(first_free_ch[0]!='\0'){ // if there is a free block in this block
-				first_free=atoi(first_free_ch);
-				free(file_data);
-				free(first_free_ch);
-				free(full_path);
-				return first_free;
-			}
-			free(file_data);
-			free(first_free_ch);
+			
 		}
 		current_block_num++;
 	}
 	free(full_path);
-	return 0;
+	return -1; // did not find it
 }
 
 int mknod_rr(const char *path, mode_t mode, dev_t dev){
