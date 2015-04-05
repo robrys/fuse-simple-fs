@@ -45,6 +45,14 @@ int rm_file(const char* path, char dir_or_reg, char last_link);
 int add_free_block(char* block_num);
 int unlink_rr(const char * path);
 int get_block_num(const char* path, char dir_or_reg);
+// FIX HARD CODING AT VERY END
+
+/* HARD CODED:
+ * init_rr():bdir_path_size():malloc(100) // not allowed more than 100 digits in largest block # string
+ * 
+ * 
+ * 
+ */
 
 // make this not hard coded, but use fuse get context?
 void log_msg(const char* msg){
@@ -74,8 +82,9 @@ void* init_rr(struct fuse_conn_info *conn){
 		
 	// build the blocks dir file name path
 	char* blocks_dir=malloc(bdir_size); // char* blocks_dir=malloc(256*4*4); // arbitrary max size
-	strcpy(blocks_dir, fuse_get_context()->private_data);
-	strcat(blocks_dir, "/blocks");
+	blocks_dir[0]='\0';
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", (char *) fuse_get_context()->private_data);
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/blocks");
 	
 	// make the directory for the blocks if it doesn't exist
 	int result_bdir=access(blocks_dir, F_OK);
@@ -84,7 +93,7 @@ void* init_rr(struct fuse_conn_info *conn){
 	}
 	
 	// only change the # after this position in the string
-	strcat(blocks_dir, "/fusedata.");
+	sprintf(blocks_dir+strlen(blocks_dir), "%s",  "/fusedata.");
 	int path_pos=strlen(blocks_dir);
 
 	// create all the block files, if they don't already exist
@@ -115,12 +124,12 @@ int bdir_path_size(){
 	* This depends on the length of the CWD passed in from main().
 	*/
 	log_msg("bdir_path_size(): enter");
-	char* num_digits=malloc(100);
-	sprintf(num_digits, "%d", MAX_FILES-1);
+	char* num_digits=malloc(100); // not allowed more than 100 digits in largest block # string
+	sprintf(num_digits, "%d", MAX_FILES-1); // no +strlen(num_digits) means prints to first byte of num_digits
 	int size=strlen(fuse_get_context()->private_data);
 	size+=strlen("/blocks/fusedata.");
-	size+=strlen(num_digits); // for the null character at the end 
-	if(size<1024) { size=1024; } // fopen seems to cause memory problems if less than 1024 sized string
+	size+=strlen(num_digits)+1; // for the null character at the end 
+	if(size<1024) { size=1024; }
 	sprintf(num_digits, "%d", size);
 	log_msg("bdir_path_size(): bdir path size=");
 	log_msg(num_digits);
@@ -139,19 +148,23 @@ void create_super_block(){
 	time_t current_time;
 	time(&current_time);
 	
+	log_msg("create_super_block(): enter");
 	int bdir_size=bdir_path_size();
-	//~ char* blocks_dir=malloc(bdir_size);
-	char* blocks_dir=malloc(1000);
-	strcpy(blocks_dir, fuse_get_context()->private_data);
-	strcat(blocks_dir, "/blocks");
-	strcat(blocks_dir, "/fusedata.0");
+	char* blocks_dir=malloc(bdir_size);
+	//~ char* blocks_dir=malloc(1024);
+	blocks_dir[0]='\0';
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", (char *) fuse_get_context()->private_data);
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/blocks");
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/fusedata.0");
+	log_msg(blocks_dir);
 	
 	int result=access(blocks_dir, F_OK);
 	if( result==0 ){ // opened okay 				
 		FILE* fd=fopen(blocks_dir,"r+");
-		
-		// is it okay to strcpy for something so small when have to update a value?
 		char* fields=malloc(1000);
+		fields[0]='\0'; // so strlen=0
+		log_msg("create_super_block(): fields before fill");
+		log_msg(fields);
 		sprintf(fields+strlen(fields), "%s", "{creationTime:");
 		sprintf(fields+strlen(fields), "%d", (int)current_time );	
 		sprintf(fields+strlen(fields), "%s", ",mounted:");
@@ -165,6 +178,8 @@ void create_super_block(){
 		sprintf(fields+strlen(fields), "%s", ",maxBlocks:");
 		sprintf(fields+strlen(fields), "%d", MAX_FILES);
 		sprintf(fields+strlen(fields), "%c", '}');
+		log_msg("create_super_block(): fields after fill");
+		log_msg(fields);
 		fwrite(fields, strlen(fields), 1, fd);
 		fclose(fd);			
 		free(fields);
@@ -174,14 +189,14 @@ void create_super_block(){
 
 void free_block_list(){
 	char* blocks_dir=malloc(1000);
-	//strcpy(blocks_dir, fullpathz);
-	strcpy(blocks_dir, fuse_get_context()->private_data);
-	strcat(blocks_dir, "/blocks");
-	strcat(blocks_dir, "/fusedata.");
+	blocks_dir[0]='\0'; 
+	sprintf(blocks_dir+strlen(blocks_dir), "%s",(char *) fuse_get_context()->private_data);
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/blocks");
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/fusedata.");
 	int path_pos=strlen(blocks_dir); // since only change digits at the end
 	int file_number=1;
 	char* curr_block=malloc(100); // no more than 100 digits
-
+	curr_block[0]='\0';
 	int j;
 	for(j=1; j<26; j++){ // FIX THIS HARDCODING
 		sprintf(blocks_dir+path_pos, "%d", file_number);	
@@ -207,21 +222,23 @@ void free_block_list(){
 }
 
 void create_root_dir(){
+	log_msg("create_root_dir(): enter");
 	time_t current_time;
 	time(&current_time);
-	
 	char* blocks_dir=malloc(1000);
-	strcpy(blocks_dir, fuse_get_context()->private_data);
-	strcat(blocks_dir, "/blocks");
-	strcat(blocks_dir, "/fusedata.");
+	blocks_dir[0]='\0'; 
+	sprintf(blocks_dir+strlen(blocks_dir), "%s",(char *) fuse_get_context()->private_data);
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/blocks");
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/fusedata.");
 	sprintf(blocks_dir+strlen(blocks_dir), "%d", 26); // FIX THIS HARDCODING
 	
 	int resultz=access(blocks_dir, F_OK);
 	if( resultz==0 ){ // opened okay 				
 		FILE* fd=fopen(blocks_dir,"r+");
-		
-		// is it okay to strcpy for something so small when have to update a value?
 		char* fields=malloc(1000);
+		fields[0]='\0';
+		log_msg("create_root_dir(): fields before fill");
+		log_msg(fields);
 		sprintf(fields+strlen(fields), "%s", "{size:"); // have to update this with code
 		sprintf(fields+strlen(fields), "%d", 4096 ); // FIX HARD CODING
 		sprintf(fields+strlen(fields), "%s", ",uid:");
@@ -243,29 +260,33 @@ void create_root_dir(){
 		sprintf(fields+strlen(fields), "%s", ",d:..:");
 		sprintf(fields+strlen(fields), "%d", 26); // FIX HARD CORDING
 		sprintf(fields+strlen(fields), "%s", "}}");
+		log_msg("create_root_dir(): fields after fill");
+		log_msg(fields);
 		fwrite(fields, strlen(fields), 1, fd);
 		fclose(fd);			
 		free(fields);
 	}
 	free(blocks_dir);
-	//{size:0, uid:1, gid:1, mode:16877, atime:1323630836, ctime:1323630836, mtime:1323630836, linkcount:2, filename_to_inode_dict: {d:.:26,d:..:26}}
-	
+	log_msg("create_root_dir(): exit");
 }
 
 static int opendir_rr(const char* path, struct fuse_file_info * fi){	//initialize all needed variables and paths
-log_msg("opendir_rr(): enter\r\nopendir_rr(): path=");
-log_msg(path);
+	log_msg("opendir_rr(): enter\r\nopendir_rr(): path=");
+	log_msg(path);
 	int full_path_pos=0;
 	char* next_dir=malloc(1000); // random number
+	next_dir[0]='\0'; // so strlen is 0, otherwise strlen might just read 4096 until '\0' and your suffix is that long full of garbage
 	char* next_block_num=malloc(100); // FIX HARD CODING
+	next_block_num[0]='\0';
 	char* blocks_dir=malloc(1000);	
+	blocks_dir[0]='\0';
 	char* block_data=malloc(4096); // FIX HARD CODING
+	block_data[0]='\0';
+	
 	int hard_coded=26;
-	next_block_num[0]='\0'; // so strlen is 0, otherwise strlen might just read 4096 until '\0' and your suffix is that long full of garbage
 	sprintf(next_block_num+strlen(next_block_num), "%d", hard_coded); // FIX HARD CODED INITIALIZATION
-//	sprintf(blocks_dir+strlen(blocks_dir), "%s", fullpath);
-log_msg("opendir_rr(): Original next block #");
-log_msg(next_block_num);
+	log_msg("opendir_rr(): Original next block #");
+	log_msg(next_block_num);
 	sprintf(blocks_dir, "%s", (char *)fuse_get_context()->private_data); // always prints to position 0
 	//~ sprintf(blocks_dir, "%s", "/home/rahhbertt/Desktop/test"); // always prints to position 0
 	
@@ -359,7 +380,9 @@ log_msg(next_block_num);
 				free(temp_cmp);
 				free(block_data);
 				log_msg("opendir_rr(): exit on directory not found in dict");
-				if(fi!=NULL) { fi->fh=NULL; } 
+				if(fi!=NULL) { 
+					fi->fh=NULL; 
+				} 
 				return -ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
 			}
 		}
@@ -368,8 +391,8 @@ log_msg(next_block_num);
 }
 
 static int getattr_rr(const char *path, struct stat *stbuf) {
-log_msg("getattr_rr(): enter\r\ngetattr_rr(): path=");
-log_msg(path);
+	log_msg("getattr_rr(): enter\r\ngetattr_rr(): path=");
+	log_msg(path);
 	memset(stbuf, 0, sizeof(struct stat)); // so if field left empty, its '0' not garbage
 
 	// no dir passed in, no chance to do otherwise
@@ -461,9 +484,10 @@ static int readdir_rr(const char *path, void *buf, fuse_fill_dir_t filler, off_t
 	// set up memory for current_entry
 	
 	char* current_entry=malloc(1000); // FIX HARD CODING
-	current_entry[0]='\0';
+	current_entry[0]='/';
+	current_entry[1]='\0';
 	//strcpy(current_entry, path);	
-	if(current_entry[strlen(current_entry)-1]!='/'){ sprintf(current_entry+strlen(current_entry), "%c", '/'); } // append a / if none there
+	//~ if(current_entry[strlen(current_entry)-1]!='/'){ sprintf(current_entry+strlen(current_entry), "%c", '/'); } // append a / if none there
 	int path_pos=strlen(current_entry);
 	// loop until find dictionary
 	int dict_pos=1;
@@ -780,9 +804,14 @@ int mkdir_rr(const char *path, mode_t mode){
 	
 	
 	// get the first free block off the free block list
+	
+	log_msg("mkdir_rr(): SUCCESS/dir does not already exist2");
 	int free_block=first_free_block();
+	
+	log_msg("mkdir_rr(): SUCCESS/dir does not already exist3");
 	char* debug=malloc(100);
-	sprintf(debug, "%d", free_block);
+	debug[0]='\0';
+	sprintf(debug+strlen(debug), "%d", free_block);
 	log_msg("mkdir_rr(): free_block #=");
 	log_msg(debug);
 		
@@ -790,7 +819,7 @@ int mkdir_rr(const char *path, mode_t mode){
 	char* file_data=malloc(4096); // hard coded
 	char* file_name=malloc(1000); // hard coded
 	file_name[0]='\0';
-	sprintf(file_name, "%s", fuse_get_context()->private_data);
+	sprintf(file_name, "%s", (char *)fuse_get_context()->private_data);
 	sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
 	sprintf(file_name+strlen(file_name), "%d", free_block);
 	result = access(file_name, F_OK);
@@ -899,39 +928,69 @@ int mkdir_rr(const char *path, mode_t mode){
 }
 	
 int first_free_block(){
+	log_msg("first_free_block(): enter");
 	int current_block_num=1; // hard coded?
 	int first_free=-1;
+	
+	log_msg("first_free_block(): enter1");
 	char* full_path=malloc(1000); // definitely hard coded
+	
+	log_msg("first_free_block(): ente2r");
 	full_path[0]='\0';
-	sprintf(full_path, "%s", fuse_get_context()->private_data);
+	sprintf(full_path, "%s", (char *)fuse_get_context()->private_data);
 	sprintf(full_path+strlen(full_path), "%s", "/blocks/fusedata.");
+	
+	log_msg("first_free_block(): enter3");
 	int full_path_pos=strlen(full_path);
 	while(current_block_num < 26) { // fix hard coding
+		
+	log_msg("first_free_block(): enter4");
 		sprintf(full_path+full_path_pos, "%d", current_block_num);
+		
+	log_msg("first_free_block(): enter5");
 		int result=access(full_path, F_OK);
+		
+	log_msg("first_free_block(): enter6");
 		if(result==0){
+				log_msg("first_free_block(): enter7");
 			FILE* fh=fopen(full_path, "r");
+				log_msg("first_free_block(): enter8");
 			char* file_data=malloc(4096); // hard coded
+				log_msg("first_free_block(): enter9");
 			fread(file_data, 4096, 1, fh); // hard coded
+				log_msg("first_free_block(): enter10");
 			int file_pos=0;
+				log_msg("first_free_block(): enter11");
 			char * first_free_ch=malloc(1000); // FIX HARD CODING
 			first_free_ch[0]='\0';
+				log_msg("first_free_block(): enter12");
+				log_msg(file_data);
 			while(file_data[file_pos]!=','){
 				sprintf(first_free_ch+strlen(first_free_ch), "%c", file_data[file_pos]);
 				file_pos++;
 			}
+			
+				log_msg("first_free_block(): enter13");
 			if(first_free_ch[0]!='\0'){ // if there is a free block in this block
+				
+				log_msg("first_free_block(): enter14");
 				first_free=atoi(first_free_ch);
 				free(file_data);
 				free(first_free_ch);
 				free(full_path);
+				log_msg("first_free_block(): exit, found a free block");
 				return first_free;
 			}
+			
+				log_msg("first_free_block(): enter15");
 			free(file_data);
 			free(first_free_ch);
 		}
+		
+				log_msg("first_free_block(): enter16");
 		current_block_num++;
 	}
+	log_msg("first_free_block(): exit, found no blocks");
 	free(full_path);
 	return first_free;
 }	
