@@ -17,8 +17,23 @@
 fusermount -u ~/Desktop/test/m; gcc -Wall -g ~/Desktop/test/os.c `pkg-config fuse --cflags --libs` -o OS_hw; ./OS_hw ./m; ls -al m
 
 */
+
+const int FILE_SIZE=4096;
+const int MAX_FILES=10000;
+
+
+void log_msg(const char* msg);
+static void* init_rr(struct fuse_conn_info *conn);
+void create_root_dir();
+void free_block_list();
+void create_super_block();
+
+
 static int opendir_rr(const char* path, struct fuse_file_info * fi);
 
+
+
+// make this not hard coded, but use fuse get context?
 void log_msg(const char* msg){
 	FILE* fh=fopen("/home/rahhbertt/Desktop/test/logs.txt", "a");
 	if(msg!=NULL) { fwrite(msg, strlen(msg), 1, fh); }
@@ -27,6 +42,186 @@ void log_msg(const char* msg){
 	fwrite("\r\n", 2, 1, fh);
 	fclose(fh);
 }
+
+// will this work calling it from /fusedata?
+void* init_rr(struct fuse_conn_info *conn){
+	/*
+	init(): creates all the fusedata.X block files that do not already exist, and, if none of them
+	existed when init() was called, creates the super block, free block list, and root directory block.
+	* RETURN: fuse_get_context()->private_data is returned, as fuse takes the return of init to re-initialize private_data.
+	*/
+	log_msg("init(): enter");
+	
+	// create a buffer of all 0s
+ 	char* buf=malloc(FILE_SIZE); 
+ 	memset(buf, '0', FILE_SIZE); 
+	
+	// figure out correct size for file name path to blocks dir
+	char* num_digits=malloc(100);
+	sprintf(num_digits, "%d", MAX_FILES-1);
+	int size=strlen(fuse_get_context()->private_data);
+	size+=strlen("/blocks/fusedata.");
+	size+=strlen(num_digits); // for the null character at the end 
+	if(size<1024) { size=1024; } // fopen seems to cause memory problems if less than 1024 sized string
+	sprintf(num_digits, "%d", size);
+	log_msg("init(): file name size:");
+	log_msg(num_digits);
+	free(num_digits);
+	
+	// build the blocks dir file name path
+	char* blocks_dir=malloc(size); // char* blocks_dir=malloc(256*4*4); // arbitrary max size
+	strcpy(blocks_dir, fuse_get_context()->private_data);
+	strcat(blocks_dir, "/blocks");
+	
+	// make the directory for the blocks if it doesn't exist
+	int result_bdir=access(blocks_dir, F_OK);
+	if( result_bdir <0 && errno==ENOENT){ 
+		mkdir(blocks_dir, S_IRWXU | S_IRWXG | S_IROTH | S_IWOTH | S_IXOTH); 
+	}
+	
+	// only change the # after this position in the string
+	strcat(blocks_dir, "/fusedata.");
+	int path_pos=strlen(blocks_dir);
+
+	// create all the block files, if they don't already exist
+	int i;
+	for(i=0; i<MAX_FILES/100; i++){
+		sprintf(blocks_dir+path_pos, "%d", i);		
+		int result=access(blocks_dir, F_OK);		
+		if( result <0 && errno==ENOENT){ 				
+			FILE* fd=fopen(blocks_dir,"w+");
+			fwrite(buf, FILE_SIZE, 1, fd);
+			fclose(fd);			
+		} // silently fails if an error opening that file
+	}
+	if( result_bdir<0 && errno==ENOENT){ // if the blocks dir hadn't already existed	
+		create_super_block(); // make the super block and free block list
+		free_block_list();
+		create_root_dir();
+	}
+	free(buf);
+	free(blocks_dir);
+	log_msg("init(): exit");
+	return fuse_get_context()->private_data; // WHAT INIT RETURNS BECOMES PRIVATE_DATA FOR GOOD
+}
+
+void create_super_block(){
+	time_t current_time;
+	time(&current_time);
+	
+	char* blocks_dir=malloc(1000);
+	//strcpy(blocks_dir, fullpathz);
+	strcpy(blocks_dir, fuse_get_context()->private_data);
+	strcat(blocks_dir, "/blocks");
+	strcat(blocks_dir, "/fusedata.0");
+	
+	int result=access(blocks_dir, F_OK);
+	if( result==0 ){ // opened okay 				
+		FILE* fd=fopen(blocks_dir,"r+");
+		
+		// is it okay to strcpy for something so small when have to update a value?
+		char* fields=malloc(1000);
+		sprintf(fields+strlen(fields), "%s", "{creationTime:");
+		sprintf(fields+strlen(fields), "%d", (int)current_time );	
+		sprintf(fields+strlen(fields), "%s", ",mounted:");
+		sprintf(fields+strlen(fields), "%d", 1); // FIX HARD CODING
+		sprintf(fields+strlen(fields), "%s", ",devId:20,freeStart:");
+		sprintf(fields+strlen(fields), "%d", 1); // FIX HARD CODING
+		sprintf(fields+strlen(fields), "%s", ",freeEnd:");
+		sprintf(fields+strlen(fields), "%d", 25); // FIX HARD CODING
+		sprintf(fields+strlen(fields), "%s", ",root:");
+		sprintf(fields+strlen(fields), "%d", 26); // FIX HARD CODING
+		sprintf(fields+strlen(fields), "%s", ",maxBlocks:");
+		sprintf(fields+strlen(fields), "%d", MAX_FILES);
+		sprintf(fields+strlen(fields), "%c", '}');
+		fwrite(fields, strlen(fields), 1, fd);
+		fclose(fd);			
+		free(fields);
+	}
+	free(blocks_dir);
+}
+
+void free_block_list(){
+	char* blocks_dir=malloc(1000);
+	//strcpy(blocks_dir, fullpathz);
+	strcpy(blocks_dir, fuse_get_context()->private_data);
+	strcat(blocks_dir, "/blocks");
+	strcat(blocks_dir, "/fusedata.");
+	int path_pos=strlen(blocks_dir); // since only change digits at the end
+	int file_number=1;
+	char* curr_block=malloc(100); // no more than 100 digits
+
+	int j;
+	for(j=1; j<26; j++){ // FIX THIS HARDCODING
+		sprintf(blocks_dir+path_pos, "%d", file_number);	
+		int result=access(blocks_dir, F_OK);
+		if( result==0 ){ // opened okay 				
+			FILE* fd=fopen(blocks_dir,"r+");
+			int i;
+			for(i=0; i<400; i++){ // FIX THIS HARD CODING
+				curr_block[0]='\0'; // "empty" the string					
+				if((j-1)*(400)+i>26){ // FIX THIS HARD CODING
+					sprintf(curr_block+strlen(curr_block), "%d", (j-1)*400+i);
+					sprintf(curr_block+strlen(curr_block), "%c", ','); // yes will end with a trailing comma
+					fwrite(curr_block, strlen(curr_block), 1, fd); // fd is a resource identifier, not a pointer
+				}
+			} // should have an ELSE and error message or exit code or something, or log file write
+			// creat a log(char*) function to write log messages in case of error
+			fclose(fd);
+			file_number++;
+		}
+	}
+	free(blocks_dir);
+	free(curr_block);
+}
+
+void create_root_dir(){
+	time_t current_time;
+	time(&current_time);
+	
+	char* blocks_dir=malloc(1000);
+	//strcpy(blocks_dir, fullpath);
+	strcpy(blocks_dir, fuse_get_context()->private_data);
+	strcat(blocks_dir, "/blocks");
+	strcat(blocks_dir, "/fusedata.");
+	sprintf(blocks_dir+strlen(blocks_dir), "%d", 26); // FIX THIS HARDCODING
+	
+	int resultz=access(blocks_dir, F_OK);
+	if( resultz==0 ){ // opened okay 				
+		FILE* fd=fopen(blocks_dir,"r+");
+		
+		// is it okay to strcpy for something so small when have to update a value?
+		char* fields=malloc(1000);
+		sprintf(fields+strlen(fields), "%s", "{size:"); // have to update this with code
+		sprintf(fields+strlen(fields), "%d", 0 ); // FIX HARD CODING
+		sprintf(fields+strlen(fields), "%s", ",uid:");
+		sprintf(fields+strlen(fields), "%d", 1); // this is okay hard coding
+		sprintf(fields+strlen(fields), "%s", ",gid:");
+		sprintf(fields+strlen(fields), "%d", 1); // this is okay hard coding
+		sprintf(fields+strlen(fields), "%s", ",mode:");
+		sprintf(fields+strlen(fields), "%d", 16877); // this is okay hard coding
+		sprintf(fields+strlen(fields), "%s", ",atime:");
+		sprintf(fields+strlen(fields), "%d", (int)current_time); // FIX HARD CODING
+		sprintf(fields+strlen(fields), "%s", ",ctime:");
+		sprintf(fields+strlen(fields), "%d", (int)current_time); // FIX HARD CODING
+		sprintf(fields+strlen(fields), "%s", ",mtime:");
+		sprintf(fields+strlen(fields), "%d", (int)current_time);
+		sprintf(fields+strlen(fields), "%s", ",linkcount:");
+		sprintf(fields+strlen(fields), "%d", 2); // this is okay, you link to yourself twice
+		sprintf(fields+strlen(fields), "%s", ",file_name_to_inode_dict:{d:.:");
+		sprintf(fields+strlen(fields), "%d", 26); // FIX HARD CORDING
+		sprintf(fields+strlen(fields), "%s", ",d:..:");
+		sprintf(fields+strlen(fields), "%d", 26); // FIX HARD CORDING
+		sprintf(fields+strlen(fields), "%s", "}}");
+		fwrite(fields, strlen(fields), 1, fd);
+		fclose(fd);			
+		free(fields);
+	}
+	free(blocks_dir);
+	//{size:0, uid:1, gid:1, mode:16877, atime:1323630836, ctime:1323630836, mtime:1323630836, linkcount:2, filename_to_inode_dict: {d:.:26,d:..:26}}
+	
+}
+
 
 int releasedir_rr(const char * path, struct fuse_file_info * fi){
 	log_msg("releasedir(): enter");
@@ -422,8 +617,6 @@ log_msg(path);
 void create_super_block(); 
 void free_block_list();
 void create_root_dir();
-const int FILE_SIZE=4096;
-const int MAX_FILES=10000;
 // Undocumented but extraordinarily useful fact:  the fuse_context is
 // set up before this function is called, and
 // fuse_get_context()->private_data returns the user_data passed to
@@ -431,173 +624,8 @@ const int MAX_FILES=10000;
 // parameter coming in here, or else the fact should be documented
 // (and this might as well return void, as it did in older versions of
 // FUSE).
-static void* init_rr(struct fuse_conn_info *conn) {
-log_msg("init(): enter");
-	// create a buffer of 4096 "0" characters
-	int letter='0';
- 	char* buf;
- 	buf=(char *)malloc(FILE_SIZE); 
- 	memset(buf, letter, FILE_SIZE);
-	
-	// create a buffer for the full name
-	// in theory, strlen(priv_data)+strlen(num_digits)=1, but first 1 is unknown
-	char* blocks_dir=malloc(256*4*4); // arbitrary max size
-	//strcpy(blocks_dir, fullpathz);
-	strcpy(blocks_dir, fuse_get_context()->private_data);
-	strcat(blocks_dir, "/blocks");
-	
-	// make the directory for the blocks if it doesn't exist
-	int result_bdir=access(blocks_dir, F_OK);
-	if( result_bdir <0 && errno==ENOENT){ 
-		mkdir(blocks_dir, S_IRWXU | S_IRWXG | S_IROTH | S_IWOTH | S_IXOTH); 
-	}
-	
-	// only changing the # after this position in the string
-	strcat(blocks_dir, "/fusedata.");
-	int path_pos=strlen(blocks_dir);
-	
-	// create all the block files, if they don't already exist
-	int i;
-	for(i=0; i<MAX_FILES/100; i++){
-		sprintf(blocks_dir+path_pos, "%d", i);		
-		int result=access(blocks_dir, F_OK);
-		if( result <0 && errno==ENOENT){ 				
-			FILE* fd=fopen(blocks_dir,"w+");
-			fwrite(buf, FILE_SIZE, 1, fd);
-			fclose(fd);			
-		}
-		//else {} // figure out a return message or errstr somehow later
-	}
-	if( result_bdir<0 && errno==ENOENT){ // if the blocks dir hadn't already existed	
-		create_super_block(); // make the super block and free block list
-		free_block_list();
-		create_root_dir(); // should be mdkir("/") in the future, and a test case for if dir=="/" do this code
-	}
-	free(buf);
-	free(blocks_dir);
-	blocks_dir=NULL;
-log_msg("init(): exit");
-	return fuse_get_context()->private_data; // WHAT INIT RETURNS BECOMES PRIVATE_DATA FOR GOOD
-}
 	//~ FILE* log=fopen("/home/rahhbertt/Desktop/test/log.txt", "w+");
 	//~ fclose(log);
-
-void create_super_block(){
-	time_t current_time;
-	time(&current_time);
-	
-	char* blocks_dir=malloc(1000);
-	//strcpy(blocks_dir, fullpathz);
-	strcpy(blocks_dir, fuse_get_context()->private_data);
-	strcat(blocks_dir, "/blocks");
-	strcat(blocks_dir, "/fusedata.0");
-	
-	int result=access(blocks_dir, F_OK);
-	if( result==0 ){ // opened okay 				
-		FILE* fd=fopen(blocks_dir,"r+");
-		
-		// is it okay to strcpy for something so small when have to update a value?
-		char* fields=malloc(1000);
-		sprintf(fields+strlen(fields), "%s", "{creationTime:");
-		sprintf(fields+strlen(fields), "%d", (int)current_time );	
-		sprintf(fields+strlen(fields), "%s", ",mounted:");
-		sprintf(fields+strlen(fields), "%d", 1); // FIX HARD CODING
-		sprintf(fields+strlen(fields), "%s", ",devId:20,freeStart:");
-		sprintf(fields+strlen(fields), "%d", 1); // FIX HARD CODING
-		sprintf(fields+strlen(fields), "%s", ",freeEnd:");
-		sprintf(fields+strlen(fields), "%d", 25); // FIX HARD CODING
-		sprintf(fields+strlen(fields), "%s", ",root:");
-		sprintf(fields+strlen(fields), "%d", 26); // FIX HARD CODING
-		sprintf(fields+strlen(fields), "%s", ",maxBlocks:");
-		sprintf(fields+strlen(fields), "%d", MAX_FILES);
-		sprintf(fields+strlen(fields), "%c", '}');
-		fwrite(fields, strlen(fields), 1, fd);
-		fclose(fd);			
-		free(fields);
-	}
-	free(blocks_dir);
-}
-
-void free_block_list(){
-	char* blocks_dir=malloc(1000);
-	//strcpy(blocks_dir, fullpathz);
-	strcpy(blocks_dir, fuse_get_context()->private_data);
-	strcat(blocks_dir, "/blocks");
-	strcat(blocks_dir, "/fusedata.");
-	int path_pos=strlen(blocks_dir); // since only change digits at the end
-	int file_number=1;
-	char* curr_block=malloc(100); // no more than 100 digits
-
-	int j;
-	for(j=1; j<26; j++){ // FIX THIS HARDCODING
-		sprintf(blocks_dir+path_pos, "%d", file_number);	
-		int result=access(blocks_dir, F_OK);
-		if( result==0 ){ // opened okay 				
-			FILE* fd=fopen(blocks_dir,"r+");
-			int i;
-			for(i=0; i<400; i++){ // FIX THIS HARD CODING
-				curr_block[0]='\0'; // "empty" the string					
-				if((j-1)*(400)+i>26){ // FIX THIS HARD CODING
-					sprintf(curr_block+strlen(curr_block), "%d", (j-1)*400+i);
-					sprintf(curr_block+strlen(curr_block), "%c", ','); // yes will end with a trailing comma
-					fwrite(curr_block, strlen(curr_block), 1, fd); // fd is a resource identifier, not a pointer
-				}
-			} // should have an ELSE and error message or exit code or something, or log file write
-			// creat a log(char*) function to write log messages in case of error
-			fclose(fd);
-			file_number++;
-		}
-	}
-	free(blocks_dir);
-	free(curr_block);
-}
-
-void create_root_dir(){
-	time_t current_time;
-	time(&current_time);
-	
-	char* blocks_dir=malloc(1000);
-	//strcpy(blocks_dir, fullpath);
-	strcpy(blocks_dir, fuse_get_context()->private_data);
-	strcat(blocks_dir, "/blocks");
-	strcat(blocks_dir, "/fusedata.");
-	sprintf(blocks_dir+strlen(blocks_dir), "%d", 26); // FIX THIS HARDCODING
-	
-	int resultz=access(blocks_dir, F_OK);
-	if( resultz==0 ){ // opened okay 				
-		FILE* fd=fopen(blocks_dir,"r+");
-		
-		// is it okay to strcpy for something so small when have to update a value?
-		char* fields=malloc(1000);
-		sprintf(fields+strlen(fields), "%s", "{size:"); // have to update this with code
-		sprintf(fields+strlen(fields), "%d", 0 ); // FIX HARD CODING
-		sprintf(fields+strlen(fields), "%s", ",uid:");
-		sprintf(fields+strlen(fields), "%d", 1); // this is okay hard coding
-		sprintf(fields+strlen(fields), "%s", ",gid:");
-		sprintf(fields+strlen(fields), "%d", 1); // this is okay hard coding
-		sprintf(fields+strlen(fields), "%s", ",mode:");
-		sprintf(fields+strlen(fields), "%d", 16877); // this is okay hard coding
-		sprintf(fields+strlen(fields), "%s", ",atime:");
-		sprintf(fields+strlen(fields), "%d", (int)current_time); // FIX HARD CODING
-		sprintf(fields+strlen(fields), "%s", ",ctime:");
-		sprintf(fields+strlen(fields), "%d", (int)current_time); // FIX HARD CODING
-		sprintf(fields+strlen(fields), "%s", ",mtime:");
-		sprintf(fields+strlen(fields), "%d", (int)current_time);
-		sprintf(fields+strlen(fields), "%s", ",linkcount:");
-		sprintf(fields+strlen(fields), "%d", 2); // this is okay, you link to yourself twice
-		sprintf(fields+strlen(fields), "%s", ",file_name_to_inode_dict:{d:.:");
-		sprintf(fields+strlen(fields), "%d", 26); // FIX HARD CORDING
-		sprintf(fields+strlen(fields), "%s", ",d:..:");
-		sprintf(fields+strlen(fields), "%d", 26); // FIX HARD CORDING
-		sprintf(fields+strlen(fields), "%s", "}}");
-		fwrite(fields, strlen(fields), 1, fd);
-		fclose(fd);			
-		free(fields);
-	}
-	free(blocks_dir);
-	//{size:0, uid:1, gid:1, mode:16877, atime:1323630836, ctime:1323630836, mtime:1323630836, linkcount:2, filename_to_inode_dict: {d:.:26,d:..:26}}
-	
-}
 
 int create_rr(const char * path, mode_t mode, struct fuse_file_info * fi){
 	// check if exists
@@ -1664,7 +1692,6 @@ int unlink_rr(const char * path){
 	
 	return 0;
 }
-
 
 static struct fuse_operations oper = {
 	.init	    = init_rr,
