@@ -1073,7 +1073,9 @@ int rmdir_rr(const char * path, struct fuse_file_info * ffi){
 		log_msg("rmdir_rr(): NULL ffi, how?");
 		return -1;
 	}
-
+	struct fuse_file_info* ffi_2=malloc(sizeof(struct fuse_file_info)); // ignore ffi, errors
+	opendir_rr(path, ffi_2); // assumes this will work
+	char* dir_data=ffi_2->fh;
 	// extract dir name from file path
 	
 	
@@ -1085,6 +1087,8 @@ int rmdir_rr(const char * path, struct fuse_file_info * ffi){
 	
 	// copy over, leave that out, and handle byte appending
 	
+	
+	// call func to put block # back on free block list
 	
 	// find pos in path that separates parent dir and file name
 	int parent_pos=strlen(path)-1; // so starts at last char
@@ -1199,12 +1203,17 @@ int rmdir_rr(const char * path, struct fuse_file_info * ffi){
 	// NOTE: if new name shorter, append 0s. if new name longer, omitt zeros
 
 	// open parent dir inode file, so can write to it
+
+
+	log_msg("rmdir_rr(): file name malloc");
 	char * file_name=malloc(1000); // fix hard coding
+		log_msg("rmdir_rr(): file name malloc2");
 	file_name[0]='\0';
 	sprintf(file_name, "%s", fuse_get_context()->private_data);
 	sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
 	sprintf(file_name+strlen(file_name), "%d", atoi(parent_block_num));
 	result = access(file_name, F_OK);
+		log_msg("rmdir_rr(): file name malloc3");
 	if(result!=0){
 		log_msg("mkdir_rr(): error opening parent block");
 		log_msg("mkdir_rr(): file_name=");
@@ -1217,9 +1226,31 @@ int rmdir_rr(const char * path, struct fuse_file_info * ffi){
 		return -2;
 	}
 	FILE* fh_parent=fopen(file_name, "w"); //overwrite everything
+			log_msg("rmdir_rr(): file name malloc5");
 	fwrite(parent_data, 4096, 1, fh_parent);
 	fclose(fh_parent);	
+	
 
+	// extract the current dir's block #
+	int current_block_pos=0;
+	log_msg("rmdir_rr(): file name malloc8");
+	while(dir_data[current_block_pos]!=':' || dir_data[current_block_pos+1]!='.' || dir_data[current_block_pos+2]!=':'){
+		current_block_pos++;
+	} 
+	current_block_pos+=3; // move past :.:
+	log_msg("rmdir_rr(): file name malloc9");
+	char* current_block_num=malloc(100); // hardcoded
+	current_block_num[0]='\0'; // strlen=0
+	log_msg("rmdir_rr(): file name malloc10");
+	while(dir_data[current_block_pos]!=','){
+		sprintf(current_block_num+strlen(current_block_num), "%c", dir_data[current_block_pos]);
+		current_block_pos++;
+	}
+	log_msg("rmdir_rr(): add free block");
+	add_free_block(current_block_num);
+
+
+	free(current_block_num);
 	free(file_name);
 	free(parent_block_num);
 	free(dir_name);
@@ -1228,6 +1259,52 @@ int rmdir_rr(const char * path, struct fuse_file_info * ffi){
 	log_msg("rmdir_rr(): exit");
 	return 0;
 }
+int add_free_block(char* block_num){
+	// must leave a ',' if NO blocks left in this chunk, so "first free block" doesn't crash
+	// simply delete everything, but check if after your comma, if there is a '0'
+	// no # starts with a leading 0, so thats teh signal to leave your comma
+		log_msg("rmdir_rr(): add free block1");
+	
+int current_block_num=1+(atoi(block_num)/400); // hard coded? // 0 is superblock
+	char* full_path=malloc(1000); // definitely hard coded
+	full_path[0]='\0';
+	
+	sprintf(full_path, "%s", fuse_get_context()->private_data);
+	sprintf(full_path+strlen(full_path), "%s", "/blocks/fusedata.");
+	int full_path_pos=strlen(full_path);
+	
+
+	sprintf(full_path+full_path_pos, "%d", current_block_num);
+	
+	int result=access(full_path, F_OK);
+	if(result==0){
+			log_msg("rmdir_rr(): add free block2");
+		FILE* fh=fopen(full_path, "r+");
+		char* file_data=malloc(4096); // hard coded
+		fread(file_data, 4096, 1, fh); // hard coded
+		log_msg("rmdir_rr(): add free block3");
+		int file_pos=0;
+		while(file_data[file_pos]!=',' || file_data[file_pos+1]!='0' ) { file_pos++; }
+		sprintf(file_data+file_pos+1, "%s", block_num);
+		int old_len=strlen(file_data);
+		file_data[strlen(file_data)]=','; // get rid of the \0
+		file_data[old_len+1]='0';
+		fseek(fh, 0, SEEK_SET);
+		int written=fwrite(file_data, 4096, 1, fh);
+		
+	
+		fclose(fh);
+		
+		free(file_data);
+		
+		return 0;
+	}
+	log_msg("rmdir_rr(): add free block4");
+	free(full_path);
+	
+	
+}
+
 
 int rename_rr(const char* path, const char* new_name){
 	log_msg("rename_rr(): enter\r\nrename_rr(): current=");
@@ -1434,14 +1511,14 @@ int main(int argc, char *argv[])
 	//~ log_msg(fi_2->fh);
 	//~ char* block_data=fi_2->fh;
 	
-
+	
 	
 	
 	
 	//~ free(stbuf);
-	int result=fuse_main(argc, argv, &oper, fullpath);
+	int results=fuse_main(argc, argv, &oper, fullpath);
 	free(fullpath); // causing errors?
-	return result;
+	return results;
 	//~ return 0;
 } // for ADDING to free block list, just add to the end of it, read until hit double comma or zero or whatever
 
