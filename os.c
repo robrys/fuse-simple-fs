@@ -1066,204 +1066,168 @@ int write_rr(const char *path, const char *buf, size_t size, off_t offset, struc
 	log_msg("write_rr(): exit");
     return size;
 }
-//~ 
-//~ int releasedir(const char * path, struct fuse_file_info *fi){
-	//~ log_msg("releasedir_rr(): enter");
-	//~ if(fi==NULL){
-		//~ log_msg("releasedir_rr(): NULL fi, how?");
-		//~ return -1;
-	//~ }
-	//~ 
-	//~ // extract dir name from file path
-	//~ 
-	//~ 
-	//~ // pull up parent dir inode
-	//~ 
-	//~ 
-	//~ // find dir name in parent dir inode
-	//~ 
-	//~ 
-	//~ // copy over, leave that out, and handle byte appending
-	//~ // find pos in path that separates parent dir and file name
-	//~ int parent_pos=strlen(path)-1; // so starts at last char
-	//~ while(path[parent_pos]!='/'){  parent_pos--; }
-	//~ int file_name_pos=parent_pos+1; // to pull out file name
-	//~ // copy over parent dir path, old name, new name
-	//~ char* parent_path=malloc(1000);
-	//~ strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
-	//~ parent_path[parent_pos+1]='\0'; // so acts like sprintf
-	//~ char* old_name=malloc(1000);
-	//~ sprintf(old_name, "%s", path+file_name_pos);
-	//~ char* new_name_ch=malloc(1000);
-	//~ sprintf(new_name_ch, "%s", new_name+file_name_pos); // same dir, different name
-	//~ int len_diff=strlen(new_name_ch)-strlen(old_name);
-	//~ log_msg("rename_rr(): old_name=");
-	//~ log_msg(old_name);
-	//~ log_msg("rename_rr(): new_name_ch=");
-	//~ log_msg(new_name_ch);
-	//~ log_msg("rename_rr(): parent_path=");	
-	//~ log_msg(parent_path);
-	//~ // load parent dir inode
-	//~ struct fuse_file_info * fi=malloc(sizeof(struct fuse_file_info));
-	//~ fi->fh=NULL; // just to be safe
-	//~ int result=opendir_rr(parent_path, fi); // assuming this doesn't fail
-	//~ if(fi->fh==NULL){
-		//~ free(fi);
-		//~ free(old_name);
-		//~ free(new_name_ch);
-		//~ free(parent_path);
-		//~ log_msg("rename_rr(): failed to get parent dir inode");
-		//~ return -1;
-	//~ }
-	//~ char* parent_data=fi->fh; 
-	//~ 
-	//~ // extract the parent dir's block #
-	//~ int parent_block_pos=0;
-	//~ while(parent_data[parent_block_pos]!=':' || parent_data[parent_block_pos+1]!='.' || parent_data[parent_block_pos+2]!=':'){
-		//~ parent_block_pos++;
-	//~ } 
-	//~ parent_block_pos+=3; // move past :.:
-	//~ char* parent_block_num=malloc(100); // hardcoded
-	//~ parent_block_num[0]='\0'; // strlen=0
-	//~ while(parent_data[parent_block_pos]!=','){
-		//~ sprintf(parent_block_num+strlen(parent_block_num), "%c", parent_data[parent_block_pos]);
-		//~ parent_block_pos++;
-	//~ }
-	//~ 
-	//~ 
-	//~ // find position for old entry start and end
-	//~ int dict_pos=1, old_name_start=0, old_name_end=0;
-	//~ while(parent_data[dict_pos]!='{'){ dict_pos++; } // skip to the dictionary
-	//~ // then look for every 'd' and 'f' entry, compare
-	//~ while(1){
-		//~ dict_pos++;
-		//~ if(parent_data[dict_pos]=='d'||parent_data[dict_pos]=='f'){ // so can getattr_rr better // +1 is the :
-			//~ int cmp_pos=0;
-			//~ if(parent_data[dict_pos+2]==old_name[cmp_pos]) { old_name_start=dict_pos+2; }
-			//~ log_msg("rename_rr(): current pos");
-			//~ char* one_char=malloc(2);
-			//~ sprintf(one_char, "%c", parent_data[dict_pos+2]);
-			//~ log_msg(one_char);
-			//~ free(one_char);
-			//~ while(parent_data[dict_pos+2]==old_name[cmp_pos]){
-				//~ dict_pos++;
-				//~ cmp_pos++;
-			//~ } // if full success, now on the : bit
-			//~ char end_of_name=parent_data[dict_pos+2];
-			//~ dict_pos+=2; // if success, dict_pos+2=':', if fail, dict_pos='d', so move past it and first ':'
-			//~ while(parent_data[dict_pos]!=':') { dict_pos++; } // if success, this gets skipped, if fail, this moves to ':'
-			//~ dict_pos++; // in either case, move past second ':' to get block #
-			//~ if(cmp_pos==strlen(old_name) && end_of_name==':'){ // you have a match from start of entry to start of searching entry, and searching entry is not a substring of current entry matching from start
-				//~ 
-				//~ log_msg("rename_rr(): made it here");
-				//~ char* one_char2=malloc(2);
-				//~ sprintf(one_char2, "%c", parent_data[dict_pos-2]);
-				//~ log_msg(one_char2);
-				//~ free(one_char);
-				//~ 
-				//~ old_name_end=dict_pos-1; // at the semicolon
-				//~ // ie, so "Fold" and "Folder" don't match
-				//~ char* after_old_entry=malloc(4096); // hard coded
-				//~ strncpy(after_old_entry, parent_data+old_name_end, 4096-old_name_end);
-				//~ 
-				//~ log_msg("rename_rr(): after old entry");
-				//~ log_msg(after_old_entry);
-				//~ log_msg("rename_rr(): parent_data b/f fix");
-				//~ log_msg(parent_data);
-				//~ parent_data[old_name_start]='\0'; // string ends before the old name starts
-				//~ sprintf(parent_data+strlen(parent_data), "%s", new_name_ch);
-				//~ 
-				//~ if(len_diff>=0){ 
-					//~ // +1 since old_name_start a ':', 1 to get past it, and new_name_ch to get past the full name
-					//~ // -1 since '\0' char usign sprintf, and so sum is 0
-					//~ strncpy(parent_data+old_name_start+strlen(new_name_ch), after_old_entry, 4096-old_name_end-len_diff);
-						//~ log_msg("rename_rr(): len_diff>0");
-				//~ }
-				//~ else { // new name is shorter
-					//~ log_msg("rename_rr(): len_diff<0");
-					//~ // +1 since old_name_start a ':', 1 to get past it, and new_name_ch to get past the full name
-					//~ // -1 since '\0' char usign sprintf, and so sum is 0
-					//~ strncpy(parent_data+old_name_start+strlen(new_name_ch), after_old_entry, 4096-old_name_end); // copy over all of that data
-					//~ int i;
-					//~ for(i=0; i<abs(len_diff); i++){ // add zeros
-						//~ parent_data[4096-abs(len_diff)+i-1]='0'; // overwrite the '\0'
-					//~ }
-				//~ }
-				//~ log_msg("rename_rr(): parent_data a/f fix");
-				//~ log_msg(parent_data);
-				//~ free(after_old_entry);
-				//~ break; // exit the loop, your job is done
-			//~ } // if this 'd' is not the dir you want, keep searching
-		//~ }
-		//~ else if(parent_data[dict_pos]=='}' && parent_data[dict_pos+1]=='}'){
-			//~ log_msg("rename_rr(): exit on directory not found in dict");
-			//~ if(fi->fh!=NULL) { free(fi->fh); } 
-			//~ free(fi);
-			//~ free(parent_block_num);
-			//~ free(new_name_ch);
-			//~ free(old_name);
-			//~ free(parent_path);
-			//~ return -ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
-		//~ }
-	//~ }
-	//~ // copy over everything up to that
-	//~ 
-	//~ // insert new name
-	//~ 
-	//~ // copy over everything after that
-	//~ // NOTE: if new name shorter, append 0s. if new name longer, omitt zeros
-//~ 
-	//~ // open parent dir inode file, so can write to it
-	//~ char * file_name=malloc(1000); // fix hard coding
-	//~ file_name[0]='\0';
-	//~ sprintf(file_name, "%s", fuse_get_context()->private_data);
-	//~ sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
-	//~ sprintf(file_name+strlen(file_name), "%d", atoi(parent_block_num));
-	//~ result = access(file_name, F_OK);
-	//~ if(result!=0){
-		//~ log_msg("mkdir_rr(): error opening parent block");
-		//~ log_msg("mkdir_rr(): file_name=");
-		//~ log_msg(file_name);
-		//~ free(file_name);
-		//~ free(parent_block_num);
-		//~ free(new_name_ch);
-		//~ free(old_name);
-		//~ free(parent_path);
-		//~ free(fi);
-		//~ return -2;
-	//~ }
-	//~ FILE* fh_parent=fopen(file_name, "w"); //overwrite everything
-	//~ fwrite(parent_data, 4096, 1, fh_parent);
-	//~ fclose(fh_parent);	
-//~ 
-	//~ free(file_name);
-	//~ free(parent_block_num);
-	//~ free(new_name_ch);
-	//~ free(old_name);
-	//~ free(parent_path);
-	//~ free(fi);
-	//~ log_msg("rename_rr(): exit");
-	//~ return 0;
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ 
-	//~ log_msg("releasedir_rr(): exit");
-	//~ return 0;
-//~ }
+
+int rmdir_rr(const char * path, struct fuse_file_info * ffi){
+	log_msg("rmdir_rr(): enter");
+	if(ffi==NULL){
+		log_msg("rmdir_rr(): NULL ffi, how?");
+		return -1;
+	}
+
+	// extract dir name from file path
+	
+	
+	// pull up parent dir inode
+	
+	
+	// find dir name in parent dir inode
+	
+	
+	// copy over, leave that out, and handle byte appending
+	
+	
+	// find pos in path that separates parent dir and file name
+	int parent_pos=strlen(path)-1; // so starts at last char
+	while(path[parent_pos]!='/'){  parent_pos--; }
+	int file_name_pos=parent_pos+1; // to pull out file name
+	// copy over parent dir path,  dir name
+	char* parent_path=malloc(1000);
+	strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
+	parent_path[parent_pos+1]='\0'; // so acts like sprintf
+	char* dir_name=malloc(1000);
+	sprintf(dir_name, "%s", path+file_name_pos);
+	log_msg("rmdir_rr(): dir_name=");
+	log_msg(dir_name);
+	log_msg("rmdir_rr(): parent_path=");	
+	log_msg(parent_path);
+	// load parent dir inode, which is NOT the fi loaded here
+	struct fuse_file_info * fi=malloc(sizeof(struct fuse_file_info));
+	fi->fh=NULL; // just to be safe
+	int result=opendir_rr(parent_path, fi); // assuming this doesn't fail
+	if(fi->fh==NULL){
+		free(fi);
+		free(dir_name);
+		free(parent_path);
+		log_msg("rmdir_rr(): failed to get parent dir inode");
+		return -1;
+	}
+	int len_diff=strlen(dir_name);
+	char* parent_data=fi->fh; 
+	
+	// extract the parent dir's block #
+	int parent_block_pos=0;
+	while(parent_data[parent_block_pos]!=':' || parent_data[parent_block_pos+1]!='.' || parent_data[parent_block_pos+2]!=':'){
+		parent_block_pos++;
+	} 
+	parent_block_pos+=3; // move past :.:
+	char* parent_block_num=malloc(100); // hardcoded
+	parent_block_num[0]='\0'; // strlen=0
+	while(parent_data[parent_block_pos]!=','){
+		sprintf(parent_block_num+strlen(parent_block_num), "%c", parent_data[parent_block_pos]);
+		parent_block_pos++;
+	}
+	
+	
+	// find position for old entry start and end
+	int dict_pos=1, dir_name_start=0, dir_name_end=0;
+	while(parent_data[dict_pos]!='{'){ dict_pos++; } // skip to the dictionary
+	// then look for every 'd' and 'f' entry, compare
+	while(1){
+		dict_pos++;
+		if(parent_data[dict_pos]=='d'||parent_data[dict_pos]=='f'){ // so can getattr_rr better // +1 is the :
+			int cmp_pos=0;
+			if(parent_data[dict_pos+2]==dir_name[cmp_pos]) { dir_name_start=dict_pos-1; } // before the comma, remove this comma, leave next one, might be }
+			log_msg("rmdir_rr(): current pos");
+			char* one_char=malloc(2);
+			sprintf(one_char, "%c", parent_data[dict_pos+2]);
+			log_msg(one_char);
+			free(one_char);
+			while(parent_data[dict_pos+2]==dir_name[cmp_pos]){
+				dict_pos++;
+				cmp_pos++;
+			} // if full success, now on the : bit
+			char end_of_name=parent_data[dict_pos+2];
+			dict_pos+=2; // if success, dict_pos+2=':', if fail, dict_pos='d', so move past it and first ':'
+			while(parent_data[dict_pos]!=':') { dict_pos++; } // if success, this gets skipped, if fail, this moves to ':'
+			dict_pos++; // in either case, move past second ':' to get block #
+			if(cmp_pos==strlen(dir_name) && end_of_name==':'){ // you have a match from start of entry to start of searching entry, and searching entry is not a substring of current entry matching from start
+				
+				log_msg("rmdir_rr(): made it here");
+				while(parent_data[dict_pos]!=',' && parent_data[dict_pos]!='}') { dict_pos++; }
+				dir_name_end=dict_pos; // at the comma
+				// ie, so "Fold" and "Folder" don't match
+				char* after_old_entry=malloc(4096); // hard coded
+				strncpy(after_old_entry, parent_data+dir_name_end, 4096-dir_name_end);
+				
+				log_msg("rmdir_rr(): after old entry");
+				log_msg(after_old_entry);
+				log_msg("rmdir_rr(): parent_data b/f fix");
+				log_msg(parent_data);
+				parent_data[dir_name_start]='\0'; // string ends before the old name starts
+				
+			
+				log_msg("rmdir_rr(): len_diff<0");
+				// +1 since dir_name_start a ':', 1 to get past it, and new_name_ch to get past the full name
+				// -1 since '\0' char usign sprintf, and so sum is 0
+				strncpy(parent_data+dir_name_start, after_old_entry, 4096-dir_name_end); // copy over all of that data
+				int i;
+				for(i=0; i<abs(len_diff); i++){ // add zeros
+					parent_data[4096-abs(len_diff)+i-1]='0'; // overwrite the '\0'
+				}
+				
+				log_msg("rmdir_rr(): parent_data a/f fix");
+				log_msg(parent_data);
+				free(after_old_entry);
+				break; // exit the loop, your job is done
+			} // if this 'd' is not the dir you want, keep searching
+		}
+		else if(parent_data[dict_pos]=='}' && parent_data[dict_pos+1]=='}'){
+			log_msg("rmdir_rr(): exit on directory not found in dict");
+			if(fi->fh!=NULL) { free(fi->fh); } 
+			free(fi);
+			free(parent_block_num);
+			free(dir_name);
+			free(parent_path);
+			return -ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
+		}
+	}
+	// copy over everything up to that
+	
+	// insert new name
+	
+	// copy over everything after that
+	// NOTE: if new name shorter, append 0s. if new name longer, omitt zeros
+
+	// open parent dir inode file, so can write to it
+	char * file_name=malloc(1000); // fix hard coding
+	file_name[0]='\0';
+	sprintf(file_name, "%s", fuse_get_context()->private_data);
+	sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
+	sprintf(file_name+strlen(file_name), "%d", atoi(parent_block_num));
+	result = access(file_name, F_OK);
+	if(result!=0){
+		log_msg("mkdir_rr(): error opening parent block");
+		log_msg("mkdir_rr(): file_name=");
+		log_msg(file_name);
+		free(file_name);
+		free(parent_block_num);
+		free(dir_name);
+		free(parent_path);
+		free(fi);
+		return -2;
+	}
+	FILE* fh_parent=fopen(file_name, "w"); //overwrite everything
+	fwrite(parent_data, 4096, 1, fh_parent);
+	fclose(fh_parent);	
+
+	free(file_name);
+	free(parent_block_num);
+	free(dir_name);
+	free(parent_path);
+	free(fi);
+	log_msg("rmdir_rr(): exit");
+	return 0;
+}
 
 int rename_rr(const char* path, const char* new_name){
 	log_msg("rename_rr(): enter\r\nrename_rr(): current=");
@@ -1446,6 +1410,7 @@ static struct fuse_operations oper = {
 	.mkdir 		= mkdir_rr,
 	.write 		= write_rr,
 	.rename		= rename_rr,
+	.rmdir 		= rmdir_rr,
 };
 
 
