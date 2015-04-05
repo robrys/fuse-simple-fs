@@ -1067,12 +1067,18 @@ int write_rr(const char *path, const char *buf, size_t size, off_t offset, struc
     return size;
 }
 
+int rm_file(const char* path, char dir_or_reg, char last_link); 
+
 int rmdir_rr(const char * path, struct fuse_file_info * ffi){
+	return rm_file(path, 'd', 'y');
+}
+
+int rm_file(const char* path, char dir_or_reg, char last_link){
 	log_msg("rmdir_rr(): enter");
-	if(ffi==NULL){
-		log_msg("rmdir_rr(): NULL ffi, how?");
-		return -1;
-	}
+	//~ if(ffi==NULL){ // don't even use it
+		//~ log_msg("rmdir_rr(): NULL ffi, how?");
+		//~ return -1;
+	//~ }
 	struct fuse_file_info* ffi_2=malloc(sizeof(struct fuse_file_info)); // ignore ffi, errors
 	opendir_rr(path, ffi_2); // assumes this will work
 	char* dir_data=ffi_2->fh;
@@ -1138,7 +1144,8 @@ int rmdir_rr(const char * path, struct fuse_file_info * ffi){
 	// then look for every 'd' and 'f' entry, compare
 	while(1){
 		dict_pos++;
-		if(parent_data[dict_pos]=='d'||parent_data[dict_pos]=='f'){ // so can getattr_rr better // +1 is the :
+		//~ if(parent_data[dict_pos]=='d'||parent_data[dict_pos]=='f'){ // so can getattr_rr better // +1 is the :
+		if(parent_data[dict_pos]==dir_or_reg){ // so can getattr_rr better // +1 is the :
 			int cmp_pos=0;
 			if(parent_data[dict_pos+2]==dir_name[cmp_pos]) { dir_name_start=dict_pos-1; } // before the comma, remove this comma, leave next one, might be }
 			log_msg("rmdir_rr(): current pos");
@@ -1247,8 +1254,10 @@ int rmdir_rr(const char * path, struct fuse_file_info * ffi){
 		current_block_pos++;
 	}
 	log_msg("rmdir_rr(): add free block");
-	add_free_block(current_block_num);
-
+	
+	if(last_link=='y'){
+		add_free_block(current_block_num);
+	}
 
 	free(current_block_num);
 	free(file_name);
@@ -1302,7 +1311,7 @@ int current_block_num=1+(atoi(block_num)/400); // hard coded? // 0 is superblock
 	log_msg("rmdir_rr(): add free block4");
 	free(full_path);
 	
-	
+	return -1;
 }
 
 
@@ -1474,6 +1483,189 @@ int rename_rr(const char* path, const char* new_name){
 	return 0;
 }
 
+
+int get_block_num(const char* path, char dir_or_reg){
+	int got_block_num=-1;
+	
+	// find pos in path that separates parent dir and file name
+	int parent_pos=strlen(path)-1; // so starts at last char
+	while(path[parent_pos]!='/'){  parent_pos--; }
+	int file_name_pos=parent_pos+1; // to pull out file name
+	// copy over parent dir path,  dir name
+	char* parent_path=malloc(1000);
+	strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
+	parent_path[parent_pos+1]='\0'; // so acts like sprintf
+	char* dir_name=malloc(1000);
+	sprintf(dir_name, "%s", path+file_name_pos);
+	log_msg("get_block_num(): dir_name=");
+	log_msg(dir_name);
+	log_msg("get_block_num(): parent_path=");	
+	log_msg(parent_path);
+	// load parent dir inode, which is NOT the fi loaded here
+	struct fuse_file_info * fi=malloc(sizeof(struct fuse_file_info)); 
+	fi->fh=NULL; // just to be safe
+	opendir_rr(parent_path, fi); // assuming this doesn't fail
+	if(fi->fh==NULL){
+		free(fi);
+		free(dir_name);
+		free(parent_path);
+		log_msg("get_block_num(): failed to get parent dir inode");
+		return -1;
+	}
+	char* parent_data=fi->fh; 
+	
+	// find position for old entry start and end
+	int dict_pos=1;
+	while(parent_data[dict_pos]!='{'){ dict_pos++; } // skip to the dictionary
+	// then look for every 'd' and 'f' entry, compare
+	while(1){
+		dict_pos++;
+		//~ if(parent_data[dict_pos]=='d'||parent_data[dict_pos]=='f'){ // so can getattr_rr better // +1 is the :
+		if(parent_data[dict_pos]==dir_or_reg){ // so can getattr_rr better // +1 is the :
+			int cmp_pos=0;
+			//~ if(parent_data[dict_pos+2]==dir_name[cmp_pos]) { dir_name_start=dict_pos-1; } // before the comma, remove this comma, leave next one, might be }
+			log_msg("get_block_num(): current pos");
+			char* one_char=malloc(2);
+			sprintf(one_char, "%c", parent_data[dict_pos+2]);
+			log_msg(one_char);
+			free(one_char);
+			while(parent_data[dict_pos+2]==dir_name[cmp_pos]){
+				dict_pos++;
+				cmp_pos++;
+			} // if full success, now on the : bit
+			char end_of_name=parent_data[dict_pos+2];
+			dict_pos+=2; // if success, dict_pos+2=':', if fail, dict_pos='d', so move past it and first ':'
+			while(parent_data[dict_pos]!=':') { dict_pos++; } // if success, this gets skipped, if fail, this moves to ':'
+			dict_pos++; // in either case, move past second ':' to get block #
+			if(cmp_pos==strlen(dir_name) && end_of_name==':'){ // you have a match from start of entry to start of searching entry, and searching entry is not a substring of current entry matching from start
+				// now one past the semi colon
+				char* your_block_num=malloc(10); // no more than 10 digits per block #
+				your_block_num[0]='\0';
+				log_msg("get_block_num(): made it here");
+				while(parent_data[dict_pos]!=',' && parent_data[dict_pos]!='}') {
+					sprintf(your_block_num+strlen(your_block_num), "%c", parent_data[dict_pos]);
+					dict_pos++;
+				 }
+				got_block_num=atoi(your_block_num);
+				free(your_block_num);
+				break; // exit the loop, your job is done
+			} // if this 'd' is not the dir you want, keep searching
+		}
+		else if(parent_data[dict_pos]=='}' && parent_data[dict_pos+1]=='}'){
+			log_msg("get_block_num(): exit on directory not found in dict");
+			if(fi->fh!=NULL) { free(fi->fh); } 
+			free(fi);
+			free(parent_path);
+			free(dir_name);
+			return -ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
+		}
+	}
+	free(fi);
+	free(parent_path);
+	free(dir_name);
+	return got_block_num;
+} 
+
+int unlink_rr(const char * path){
+	// load file, load link count #
+	log_msg("unlink_rr(): enter");
+	struct fuse_file_info* fi = malloc(sizeof(struct fuse_file_info));
+	int caught=opendir_rr(path, fi);
+	if(fi==NULL||fi->fh==NULL){
+		log_msg("unlink_rr(): file inode not found");
+		return -1;
+	}
+	log_msg("unlink_rr(): 1");
+	log_msg(fi->fh);
+		
+	char* inode_data=(char *)fi->fh;
+	int data_pos=0;
+	while(inode_data[data_pos]!='l' || inode_data[data_pos+1]!='i' || inode_data[data_pos+2]!='n' || inode_data[data_pos+3]!='k') {
+		data_pos++; // advance to linkcount field
+	}  
+	while(inode_data[data_pos-1]!=':') { data_pos++; } // advance to link count #
+	int num_link_pos=data_pos;
+	char* num_links=malloc(10); // no more than 10 digits worth of links, lets be real
+	while(inode_data[data_pos]!=','){
+		sprintf(num_links, "%c", inode_data[data_pos]);
+		data_pos++;
+	}
+	int old_str_len=strlen(num_links);
+
+		log_msg("unlink_rr(): 2");
+	// copy everything after the old link count
+	char* after_old_entry=malloc(4096); // hard coded
+	strncpy(after_old_entry, inode_data+data_pos, 4096-data_pos);
+	// write a decremented link count, copy back everything
+	
+		log_msg("unlink_rr(): 2.25");
+	int new_link_count=(atoi(num_links)-1);
+	log_msg(inode_data);
+	inode_data[num_link_pos+1]='\0'; // so string "ends" there
+	sprintf(inode_data+num_link_pos, "%d", new_link_count); // appends a '\0' after it
+	log_msg(inode_data);
+	int len_diff=( strlen(inode_data)-num_link_pos ) - old_str_len;
+	
+		log_msg("unlink_rr(): 2.5");
+		log_msg("unlink_rr(): 3");
+	if(len_diff<0){
+		strncpy(inode_data+strlen(inode_data), after_old_entry, 4096-data_pos);
+		int i;
+		for(i=0; i<abs(len_diff); i++){ // add zeros
+			inode_data[4096-abs(len_diff)+i-1]='0'; // overwrite the '\0'
+		}
+	}
+	else if(len_diff==0){
+		inode_data[strlen(inode_data)]=','; // replace the '\0' with the ',' that should be there
+	} // if len_diff >0, this is not unlinking
+	free(after_old_entry);
+	
+		log_msg("unlink_rr(): 3.5");
+		log_msg(inode_data);
+	// get block # from inode
+	int block_num=get_block_num(path, 'f');
+	
+	// open up the inode block's file on the disk, write back these changes
+	char * file_name=malloc(1000); // fix hard coding
+	file_name[0]='\0';
+	sprintf(file_name, "%s", (char *)fuse_get_context()->private_data);
+	sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
+	sprintf(file_name+strlen(file_name), "%d", block_num );
+	int result = access(file_name, F_OK);
+	if(result!=0){
+		log_msg("mkdir_rr(): error opening parent block");
+		log_msg("mkdir_rr(): file_name=");
+		log_msg(file_name);
+		free(file_name);
+		free(num_links);
+		free(fi);
+		return -2;
+	}
+	
+		log_msg("unlink_rr(): 4");
+		log_msg(file_name);
+		log_msg(inode_data);
+	FILE* fh=fopen(file_name, "w"); //overwrite everything
+	fseek(fh, 0, SEEK_SET);
+	fwrite(inode_data, 4096, 1, fh);
+	fclose(fh);	
+	
+	
+		log_msg("unlink_rr(): 5");
+	
+	// call rm_file to remove it from the parent entry
+	// if linkcount==0, call with 'y' to free up blocks
+	if(new_link_count==0){ rm_file(path, 'f', 'y'); }
+	else { rm_file(path, 'f', 'n'); }
+			
+	log_msg("unlink_rr(): 6");
+	free(num_links);
+	free(fi);
+	
+	return 0;
+}
+
+
 static struct fuse_operations oper = {
 	.init	    = init_rr,
 	.getattr	= getattr_rr,
@@ -1488,9 +1680,10 @@ static struct fuse_operations oper = {
 	.write 		= write_rr,
 	.rename		= rename_rr,
 	.rmdir 		= rmdir_rr,
+	.unlink 	= unlink_rr,
 };
 
-
+// replace all '_rr(): ' with '(): ' for log_msg
 int main(int argc, char *argv[])
 {
 	char* fullpath = malloc(1000);
