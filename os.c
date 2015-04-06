@@ -1426,33 +1426,37 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 	if(okay<0) {  return okay; } // message alreadr logged
 
 	// get file's inode data
-	FILE* curr_file=open_block_file(atoi(file_inode_block_num));
-	char* curr_file_data=malloc(4096);
-	curr_file_data[0]='\0';
-	fread(curr_file_data, 4096, 1, curr_file);
-	log_msg("rm_file(): curr_file_data=");
-	log_msg(curr_file_data);
-	int indirect=get_indirect(curr_file_data);
-	int dbn_int=get_data_block_num(curr_file_data);
-	fclose(curr_file);	
-	char* data_block_num=malloc(100);
-	sprintf(data_block_num, "%d", dbn_int);
-	if(last_link=='y'){ 
-		// go into the inode block, find the data block
-		// if indirect==1, add_free_block for each entry in there, write over nothing
-		// whether its indirect=1 or 0, free up the data block, and the inode block
-		if(indirect==1){
-			int success=free_indirect_blocks(data_block_num);
-			if(success<0){ return success; } // error, already logged
+	if(dir_or_reg=='f'){
+		FILE* curr_file=open_block_file(atoi(file_inode_block_num));
+		char* curr_file_data=malloc(4096);
+		curr_file_data[0]='\0';
+		fread(curr_file_data, 4096, 1, curr_file);
+		log_msg("rm_file(): curr_file_data=");
+		log_msg(curr_file_data);
+		int indirect=get_indirect(curr_file_data);
+		int dbn_int=get_data_block_num(curr_file_data);
+		fclose(curr_file);	
+		char* data_block_num=malloc(100);
+		sprintf(data_block_num, "%d", dbn_int);
+		if(last_link=='y'){ 
+			// go into the inode block, find the data block
+			// if indirect==1, add_free_block for each entry in there, write over nothing
+			// whether its indirect=1 or 0, free up the data block, and the inode block
+			if(indirect==1){
+				int success=free_indirect_blocks(data_block_num);
+				if(success<0){ return success; } // error, already logged
+			}
+			// if indirect==0, just add_free_block the data block and the inode block
+			add_free_block(file_inode_block_num); // inode block
+			add_free_block(data_block_num);
+			// if indirect=1, go into the indirect block
+			// add_free_block for each entry there, then the indirect block itself, then the inode block
 		}
-		// if indirect==0, just add_free_block the data block and the inode block
-		add_free_block(file_inode_block_num); // inode block
-		add_free_block(data_block_num);
-		// if indirect=1, go into the indirect block
-		// add_free_block for each entry there, then the indirect block itself, then the inode block
+			free(curr_file_data);
 	}
+	else if(dir_or_reg=='d'){ add_free_block(file_inode_block_num); }
 	// if indirect=1, go into the inode block, find the indirect block
-	free(curr_file_data);
+
 	free(file_inode_block_num);
 	free(parent_block_num);
 	free(dir_name);
@@ -1822,7 +1826,6 @@ int get_block_num(const char* path, char dir_or_reg){
 	free(dir_name);
 	return got_block_num;
 } 
-
 
 
 
