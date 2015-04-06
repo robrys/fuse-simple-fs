@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <fcntl.h>
 
+#include <sys/statvfs.h> // to return statfs
+
 #include <stdlib.h>
 #include <malloc.h>
 
@@ -18,10 +20,12 @@ fusermount -u ~/Desktop/test/m; gcc -Wall -g ~/Desktop/test/os.c `pkg-config fus
 
 */
 
+// the includes and #define at the top are credited to the hello.c FS
+
 const int FILE_SIZE=4096;
 const int MAX_FILES=10000;
 
-
+// not necessary to put all prototypes here, but allows for moving around of functions in code without hassle
 void log_msg(const char* msg);
 static void* init_rr(struct fuse_conn_info *conn);
 	int bdir_path_size();
@@ -51,6 +55,14 @@ int rm_file(const char* path, char dir_or_reg, char last_link);
 	int free_indirect_blocks(char* block_num);
 int unlink_rr(const char * path);	
 	int get_block_num(const char* path, char dir_or_reg);
+int create_rr(const char * path, mode_t mode, struct fuse_file_info * fi);
+	void fill_reg_inode(char* file_data, int free_block);
+	int insert_parent_entry(char* path, int block_num);
+void destroy_rr(void* private_data);
+int statfs_rr(const char *path, struct statvfs *statv);
+	int total_free_blocks();
+int link_rr(const char *path, const char *newpath);
+
 // FIX HARD CODING AT VERY END
 // remove the fusedata.x /100 limit so it creates all 9999
 /* HARD CODED:
@@ -58,8 +70,8 @@ int unlink_rr(const char * path);
  * 
  * 
  * 
- */
-
+ */ 
+ 
 // make this not hard coded, but use fuse get context?
 void log_msg(const char* msg){
 	FILE* fh=fopen("/home/rahhbertt/Desktop/test/logs.txt", "a");
@@ -1464,6 +1476,8 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 }
 
 int find_block_num(char* inode_data, int inode_pos, char* entry_name_to_find, char* block_num_of_entry){
+	
+	// takes loaded inode data, your data pos, what entry you're looking for, and stores the block # in a string you pass in
 	log_msg("find_block_num(): enter");
 	while(1){ // scan all entries or until end of dictionary
 		inode_pos++;
@@ -1824,8 +1838,6 @@ int get_block_num(const char* path, char dir_or_reg){
 	return got_block_num;
 } 
 
-
-
 int create_rr(const char * path, mode_t mode, struct fuse_file_info * fi){
 	log_msg("create(): enter\r\ncreate(): path=");
 	log_msg(path);	
@@ -1907,7 +1919,6 @@ void fill_reg_inode(char* file_data, int free_block){ // add SIZE
 	log_msg(file_data);
 }
 
-
 int insert_parent_entry(char* path, int block_num){
 	
 	// load the parent dir's inode
@@ -1976,16 +1987,76 @@ int insert_parent_entry(char* path, int block_num){
 	return 0;
 }
 
-
-
-int mknod_rr(const char *path, mode_t mode, dev_t dev){
-	log_msg("mknod(): enter\r\nmknod(): path=");
-	log_msg(path);
-	//create_rr(path, mode, NULL);
-
-	log_msg("mknod(): exit");
-	return 0;
+void destroy_rr(void* private_data){
+	log_msg("destroy_rr(): enter");
+	if(private_data!=NULL){ free(private_data); }
+	log_msg("destroy_rr(): exit");
 }
+
+int statfs_rr(const char *path, struct statvfs *statv) {
+	statv->f_bsize=FILE_SIZE;
+	statv->f_bfree=total_free_blocks();
+	statv->f_bavail=statv->f_bfree;
+	statv->f_fsid=20; // device id?
+	
+	// f_frsize, f_blocks, f_favil, f_flag, f_namemax are irrelevant to us here
+	// practical limit f_namemax but not strictly enforced
+	// f_files is just unnecessarily slow to compute
+}
+
+int total_free_blocks(){
+	log_msg("total_free_blocks(): enter");
+	int bdir_size=bdir_path_size();
+	char* blocks_dir=malloc(bdir_size);
+	blocks_dir[0]='\0'; 
+	sprintf(blocks_dir+strlen(blocks_dir), "%s",(char *) fuse_get_context()->private_data);
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/blocks");
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/fusedata.");
+	int path_pos=strlen(blocks_dir); // since only change digits at the end
+	
+	// create each free block file, fill it with the appropriate free block #s
+	char* curr_block=malloc(100); // no more than 100 digits
+	curr_block[0]='\0';
+	int free_blocks_total=0;
+	int j;
+	for(j=1; j<26; j++){ // FIX THIS HARDCODING
+		sprintf(blocks_dir+path_pos, "%d", j);	
+		FILE* fh=open_block_file(j);		
+		char* file_data=malloc(4096);
+		file_data[0]='\0';
+		fread(file_data, 4096, 1, fh);
+		int file_pos=0;
+		while(file_pos==0 || file_data[file_pos-1]!=',' || file_data[file_pos]!='0'){
+			while(file_data[file_pos]!=','){ file_pos++; }
+			free_blocks_total++;
+			file_pos++;
+		}
+		fclose(fh);		
+		free(file_data);
+	}
+	free(blocks_dir);
+	free(curr_block);
+	log_msg("total_free_blocks(): exit");
+	return free_blocks_total;
+}
+
+int link_rr(const char *path, const char *newpath){
+	// get parent dir name from path, and original link's file name
+	
+	// opendir_rr(parent_dir_path, fi); parent_data=fi->fh; if not null, etc
+	// find_block_num(parent_data, 0, original_link_name, str_to_store_block_num);
+	
+	// insert_parent_entry(newpath, orig_link_block_num);
+
+	// modularize the unlink_rr() code that decrements link count
+	// use it to increment link count
+	// make a note to update/modularize it in linkc_ount
+	
+	// free fi->fh after that??
+	return 0;
+	// .link		= .link_rr, once ready	
+}
+
 
 // this is essentially OPEN, so opendir_rr should just call open(path, fi)
 // if limiting your amt of malloc, means you forgot to return an int
@@ -1998,6 +2069,7 @@ int write_rr(const char *path, const char *buf, size_t size, off_t offset, struc
 	log_msg("write_rr(): exit");
     return size;
 }
+
 
 
 static struct fuse_operations oper = {
@@ -2014,6 +2086,7 @@ static struct fuse_operations oper = {
 	.rmdir 		= rmdir_rr,
 	.unlink 	= unlink_rr,
 	.create 	= create_rr,
+	.destroy 	= destroy_rr,
 };
 
 // replace all '_rr(): ' with '(): ' for log_msg
