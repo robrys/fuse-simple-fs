@@ -728,7 +728,7 @@ log_msg(path);
 }
 
 static int read_rr(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
- log_msg("readdir_rr(): enter\r\readdir_rr(): path=");
+ log_msg("read_rr(): enter\r\nread_rr(): path=");
 log_msg(path);
  	
  	//~ const char* strz="ht there";
@@ -831,10 +831,7 @@ int mkdir_rr(const char *path, mode_t mode){
 	
 	// get the first free block off the free block list
 	
-	log_msg("mkdir_rr(): SUCCESS/dir does not already exist2");
 	int free_block=first_free_block();
-	
-	log_msg("mkdir_rr(): SUCCESS/dir does not already exist3");
 	char* debug=malloc(100);
 	debug[0]='\0';
 	sprintf(debug+strlen(debug), "%d", free_block);
@@ -1830,40 +1827,156 @@ int get_block_num(const char* path, char dir_or_reg){
 
 
 int create_rr(const char * path, mode_t mode, struct fuse_file_info * fi){
-	// check if exists
 	log_msg("create(): enter\r\ncreate(): path=");
-	log_msg(path);
-	
-	// this doesnt get called when trying to make a file?
-	
+	log_msg(path);	
 	if(fi==NULL){
-		log_msg("create(): exit on null");
-		return 0;
+		log_msg("create(): exit on null FI");
+		return -1;
+	}
+	if(fi->fh!=NULL){ 
+		log_msg("create(): fi->fh=");
+		log_msg(fi->fh); 
 	}
 	int result=opendir_rr(path, fi);
-	if(result!=ENOENT){ 
+	if(result!=-ENOENT){ 
 		log_msg("create(): exit, file already exists/error");
-		return 0;
+		return -1;
 	}
 	
-	//~ int free_block=first_free_block();
+	// get two free blocks, 1 for inode, 1 for data
+	int free_inode_block=first_free_block();
+	int removed=remove_free_block(free_inode_block); // need to snatch up two
+	int free_data_block=first_free_block();
+	int removed_data=remove_free_block(free_data_block);
 	
+
+	// get parent directory inode, insert this guy
+	insert_parent_entry(path, free_inode_block);
+
+	// fill the inode file and write it to a block
+	FILE* fh=open_block_file(free_inode_block);
+	char* file_data=malloc(4096);
+	file_data[0]='\0';
+	fread(file_data, 4096, 1, fh);
+	log_msg("fd1:");
+	log_msg(file_data);
+	fill_reg_inode(file_data, free_data_block);
+	fseek(fh, 0, SEEK_SET);
+	fwrite(file_data, 4096, 1, fh);
+		log_msg("fd2:");
+	log_msg(file_data);
+	fclose(fh);	
+	free(file_data);
 	// if not, get parent directoy node
 	// check if enough space to put in file name and not exceed 4096 bytes.
 	// fail if no room left
-	
-	
-	// if not, look up first free block
-	
-	// open that block, get fi->fh as the 4096 bytes
-	
-	// sprintf all the expected values, follow create_root_dir basically, but different field order
-	
-	
-	// needs to check
 	log_msg("create(): exit");
 	return 0;
 }
+
+void fill_reg_inode(char* file_data, int free_block){ // add SIZE
+	// sprintf all the expected values, follow create_root_dir basically, but different field order
+	time_t current_time;
+	time(&current_time);
+	file_data[0]='\0';
+		log_msg("fd3:");
+	log_msg(file_data);
+	sprintf(file_data, "%s", "{size:"); // have to update this with code
+	sprintf(file_data+strlen(file_data), "%d", 0 ); // FIX HARD CODING
+	sprintf(file_data+strlen(file_data), "%s", ",uid:");
+	sprintf(file_data+strlen(file_data), "%d", 1); // this is okay hard coding
+	sprintf(file_data+strlen(file_data), "%s", ",gid:");
+	sprintf(file_data+strlen(file_data), "%d", 1); // this is okay hard coding
+	sprintf(file_data+strlen(file_data), "%s", ",mode:");
+	sprintf(file_data+strlen(file_data), "%d", 33261); // this is okay hard coding
+	sprintf(file_data+strlen(file_data), "%s", ",linkcount:");
+	sprintf(file_data+strlen(file_data), "%d", 1); // this is okay, you link to yourself twice
+	sprintf(file_data+strlen(file_data), "%s", ",atime:");
+	sprintf(file_data+strlen(file_data), "%d", (int)current_time); 
+	sprintf(file_data+strlen(file_data), "%s", ",ctime:");
+	sprintf(file_data+strlen(file_data), "%d", (int)current_time); 
+	sprintf(file_data+strlen(file_data), "%s", ",mtime:");
+	sprintf(file_data+strlen(file_data), "%d", (int)current_time);
+	sprintf(file_data+strlen(file_data), "%s", ",indirect:");
+	sprintf(file_data+strlen(file_data), "%d", 0); // FIX HARD CORDING
+	sprintf(file_data+strlen(file_data), "%s", ",location:");
+	sprintf(file_data+strlen(file_data), "%d", free_block); // FIX HARD CORDING
+	sprintf(file_data+strlen(file_data), "%s", "}");
+	file_data[strlen(file_data)]='0'; // get rid of the '\0'
+		log_msg("fd4:");
+	log_msg(file_data);
+}
+
+
+int insert_parent_entry(char* path, int block_num){
+	
+	// load the parent dir's inode
+	int parent_pos=strlen(path)-1; // so starts at last char
+	while(path[parent_pos]!='/'){ 
+		parent_pos--; 
+	}
+	char* parent_path=malloc(1000);
+	strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
+	parent_path[parent_pos+1]='\0';
+	struct fuse_file_info* fi=malloc(sizeof(struct fuse_file_info));
+	int result=opendir_rr(parent_path, fi); // assuming this doesn't fail
+	free(parent_path);
+	int new_dir_pos=parent_pos+1; // maybe should check if try to mk two dirs at once that dont exist?
+
+	// extract the parent dir's block #
+	char* parent_data=fi->fh; // no malloc needed
+	int parent_block_pos=0;
+	while(parent_data[parent_block_pos]!=':' || parent_data[parent_block_pos+1]!='.' || parent_data[parent_block_pos+2]!=':'){
+		parent_block_pos++;
+	} 
+	parent_block_pos+=3; // move past :.:
+	char* parent_block_num=malloc(100); // hardcoded
+	parent_block_num[0]='\0'; // strlen=0
+	while(parent_data[parent_block_pos]!=','){
+		sprintf(parent_block_num+strlen(parent_block_num), "%c", parent_data[parent_block_pos]);
+		parent_block_pos++;
+	}
+	
+	// write entry into parent dir data
+	parent_block_pos=0;
+	while(parent_data[parent_block_pos]!='}' || parent_data[parent_block_pos+1]!='}'){ parent_block_pos++; }
+	char* new_entry=malloc(100);
+	new_entry[0]='\0';
+	sprintf(new_entry, "%s", ",f:");
+	snprintf(new_entry+strlen(new_entry), strlen(path)-new_dir_pos+1, "%s", path+new_dir_pos);
+	sprintf(new_entry+strlen(new_entry), "%s", ":");
+	sprintf(new_entry+strlen(new_entry), "%d", block_num); 
+	sprintf(new_entry+strlen(new_entry), "%s", "}}");
+	sprintf(parent_data+parent_block_pos, "%s", new_entry);
+	parent_data[strlen(parent_data)]='0'; // so not '\0' and truncated
+	free(new_entry);
+	// form file name of parent dir, open, and write entry
+	FILE* fh_parent=open_block_file(atoi(parent_block_num));
+	//~ file_name[0]='\0';
+	//~ sprintf(file_name, "%s", fuse_get_context()->private_data);
+	//~ sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
+	//~ sprintf(file_name+strlen(file_name), "%d", atoi(parent_block_num));
+	//~ result = access(file_name, F_OK);
+	//~ if(result!=0){
+		//~ log_msg("mkdir_rr(): error opening parent block");
+		//~ log_msg("mkdir_rr(): file_name=");
+		//~ log_msg(file_name);
+		//~ free(fi);
+		//~ free(debug);
+		//~ free(file_data);
+		//~ free(file_name);
+		//~ free(parent_block_num);
+		//~ return -2;
+	//~ }
+	//~ FILE* fh_parent=fopen(file_name, "w"); //overwrite everything
+	fseek(fh_parent, 0, SEEK_SET);
+	fwrite(parent_data, 4096, 1, fh_parent);
+	fclose(fh_parent);
+	free(fi->fh);
+	return 0;
+}
+
+
 
 int mknod_rr(const char *path, mode_t mode, dev_t dev){
 	log_msg("mknod(): enter\r\nmknod(): path=");
@@ -1900,6 +2013,7 @@ static struct fuse_operations oper = {
 	.rename		= rename_rr,
 	.rmdir 		= rmdir_rr,
 	.unlink 	= unlink_rr,
+	.create 	= create_rr,
 };
 
 // replace all '_rr(): ' with '(): ' for log_msg
