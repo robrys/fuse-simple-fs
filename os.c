@@ -31,10 +31,12 @@ Notes:
 * This code is recommended to be compiled with the following options:
 	gcc -Wall -g os.c `pkg-config fuse --cflags --libs` -o os_hw
 */
+
 #define FILE_SIZE 4096
 #define MAX_FILES 10000
 #define PTRS_PER_BLK 400
 #define FREE_BLK_FILES (MAX_FILES/PTRS_PER_BLK)
+#define MAX_DIGITS_BLOCK_NUM 100
 
 void log_msg(const char* msg);
 void* init_rr(struct fuse_conn_info *conn);
@@ -71,16 +73,10 @@ int create_rr(const char * path, mode_t mode, struct fuse_file_info * fi);
 void destroy_rr(void* private_data);
 int statfs_rr(const char *path, struct statvfs *statv);
 	int total_free_blocks();
+	void get_heap_parent_child(const char* path, char* parent_path, char* dir_name);
+	int get_link_count(char* file_data);
+	int mod_link_count(char* file_data, int change);
 int link_rr(const char *path, const char *newpath);
-
-// FIX HARD CODING AT VERY END
-// remove the fusedata.x /100 limit so it creates all 9999
-/* HARD CODED:
- * init_rr():bdir_path_size():malloc(100) // not allowed more than 100 digits in largest block # string
- * 
- * 
- * super block mounting
- */ 
  
 void log_msg(const char* msg){
 	// log_msg() simply prints out any passed in c_str to the log file in the CWD.
@@ -101,7 +97,6 @@ void log_msg(const char* msg){
 	free(logs_path);
 }
 
-// will this work calling it from /fusedata?
 void* init_rr(struct fuse_conn_info *conn){
 	/*
 	init(): creates all the fusedata.X block files that do not already exist, and, if none of them
@@ -131,7 +126,7 @@ void* init_rr(struct fuse_conn_info *conn){
 
 	// create all the block files, if they don't already exist
 	int i;
-	for(i=0; i<MAX_FILES/100; i++){
+	for(i=0; i<MAX_FILES; i++){
 		sprintf(blocks_dir+path_pos, "%d", i);		
 		int result=access(blocks_dir, F_OK);		
 		if( result <0 && errno==ENOENT){ 				
@@ -161,7 +156,7 @@ int bdir_path_size(){
 	*/
 	log_msg("bdir_path_size(): enter");
 
-	char* num_digits=malloc(100); // not allowed more than 100 digits in largest block # string
+	char* num_digits=malloc(MAX_DIGITS_BLOCK_NUM); // not allowed more than 100 digits in largest block # string
 	sprintf(num_digits, "%d", MAX_FILES-1);
 	int size=strlen(fuse_get_context()->private_data);
 	size+=strlen("/blocks/fusedata.");
@@ -234,7 +229,7 @@ void free_block_list(){
 	
 	// create each free block file, fill it with the appropriate free block #s
 	int file_number=1;
-	char* curr_block=malloc(100); // no more than 100 digits
+	char* curr_block=malloc(MAX_DIGITS_BLOCK_NUM); // no more than 100 digits
 	curr_block[0]='\0';
 	int j;
 	for(j=1; j<(FREE_BLK_FILES+1); j++){ 
@@ -312,7 +307,7 @@ int opendir_rr(const char* path, struct fuse_file_info * fi){
 
 	int full_path_pos=0;
 	char* next_dir=malloc(strlen(path)); // the upper limit for its size
-	char* next_block_num=malloc(100); // no more than 100 digits for block_num
+	char* next_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // no more than 100 digits for block_num
 	char* blocks_dir=malloc(bdir_path_size());	
 	char* block_data=malloc(FILE_SIZE); // FIX HARD CODING
 	next_dir[0]=next_block_num[0]=blocks_dir[0]=block_data[0]='\0';
@@ -575,7 +570,7 @@ int open_rr(const char *path, struct fuse_file_info *fi) {
 	// get data/indirect block location
 	while(block_data[loc_pos]!='l' || block_data[loc_pos+1] !='o' || block_data[loc_pos+2] !='c'){ loc_pos++; }
 	while(block_data[loc_pos-1]!=':'){ loc_pos++; } // get to first char after :
-	char* location=malloc(100); // no more than 100 digits for block #
+	char* location=malloc(MAX_DIGITS_BLOCK_NUM); // no more than 100 digits for block #
 	location[0]='\0'; // strlen =0
 	while(block_data[loc_pos]!='}'){ 
 		sprintf(location+strlen(location), "%c", block_data[loc_pos]); 
@@ -628,7 +623,7 @@ int open_rr(const char *path, struct fuse_file_info *fi) {
 		}
 		
 		// read a block #, add its data to the buffer, repeat
-		char* current_block_num=malloc(100); // max 100 digits for block #
+		char* current_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // max 100 digits for block #
 		char* ultra_file=malloc(num_blocks*FILE_SIZE); 
 		current_block_num[0]=ultra_file[0]='\0';
 		int len_ufile=0;
@@ -680,7 +675,7 @@ int read_rr(const char *path, char *buf, size_t size, off_t offset, struct fuse_
 	log_msg("read_rr(): enter\r\nread_rr(): path=");
 	log_msg(path);
 	log_msg("read_rr(): size/offset to read");
-	char* flags=malloc(100); // fix hard coding
+	char* flags=malloc(MAX_DIGITS_BLOCK_NUM); // fix hard coding
 	sprintf(flags, "%d/%d", (int)size, (int)offset);
 	log_msg(flags);
 	free(flags);
@@ -758,7 +753,7 @@ int mkdir_rr(const char *path, mode_t mode){
 	
 	log_msg("mkdir_rr(): SUCCESS. dir does not already exist");	
 	int free_block=first_free_block();
-	char* debug=malloc(100);
+	char* debug=malloc(MAX_DIGITS_BLOCK_NUM);
 	sprintf(debug, "%d", free_block);
 	log_msg("mkdir_rr(): free_block #=");
 	log_msg(debug);
@@ -798,7 +793,7 @@ int mkdir_rr(const char *path, mode_t mode){
 		parent_block_pos++;
 	} 
 	parent_block_pos+=3; // move past :.:
-	char* parent_block_num=malloc(100); // upper limit for num digits in block #
+	char* parent_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // upper limit for num digits in block #
 	parent_block_num[0]='\0'; // strlen=0
 	while(parent_data[parent_block_pos]!=','){
 		sprintf(parent_block_num+strlen(parent_block_num), "%c", parent_data[parent_block_pos]);
@@ -887,7 +882,7 @@ int first_free_block(){
 			char* file_data=malloc(FILE_SIZE); 
 			fread(file_data, 1, FILE_SIZE, fh); 
 			int file_pos=0;
-			char * first_free_ch=malloc(100); // max 100 digits for num digits in block #
+			char * first_free_ch=malloc(MAX_DIGITS_BLOCK_NUM); // max 100 digits for num digits in block #
 			first_free_ch[0]='\0';
 			log_msg("first_free_block(): opened file data=");
 			log_msg(file_data);
@@ -948,7 +943,7 @@ int remove_free_block(int rm_block){
 			char* file_data=malloc(FILE_SIZE);
 			fread(file_data, 1, FILE_SIZE, fh); 
 			int file_pos=0;
-			char * current_block_num=malloc(100); // max 100 digits in max block #
+			char * current_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // max 100 digits in max block #
 			current_block_num[0]='\0';	// search until the last free number
 			while(file_pos == 0 || file_data[file_pos-1]!=',' || file_data[file_pos]!='0'){
 				while(file_data[file_pos]!=','){ // record each current_block number to compare
@@ -960,7 +955,7 @@ int remove_free_block(int rm_block){
 					if(file_data[file_pos+1]!='0'){ bytes_removed++; } // to know how many bytes to append to end
 					fseek(fh,0,SEEK_SET);
 					int written=fwrite(file_data+bytes_removed, 1, FILE_SIZE-bytes_removed, fh);					
-					char* append_zeros=malloc(100);
+					char* append_zeros=malloc(MAX_DIGITS_BLOCK_NUM);
 					log_msg("rm_fb(): # file_data written");
 					sprintf(append_zeros, "%d", written);
 					log_msg(append_zeros);
@@ -982,6 +977,11 @@ int remove_free_block(int rm_block){
 }
 
 int rename_rr(const char* path, const char* new_name){
+	/*
+	rename_rr() takes in a path name to a file and renames the file.
+	* The file's entry in its parent directory is updated.
+	* RETURN: 0 if successful, else appropriate ERRNO error code
+	*/
 	log_msg("rename_rr(): enter\r\nrename_rr(): current=");
 	log_msg(path);
 	log_msg("rename_rr(): new_name=");
@@ -991,13 +991,14 @@ int rename_rr(const char* path, const char* new_name){
 	int parent_pos=strlen(path)-1; // so starts at last char
 	while(path[parent_pos]!='/'){  parent_pos--; }
 	int file_name_pos=parent_pos+1; // to pull out file name
+	
 	// copy over parent dir path, old name, new name
-	char* parent_path=malloc(1000);
+	char* parent_path=malloc(strlen(path)); // upper limit
 	strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
 	parent_path[parent_pos+1]='\0'; // so acts like sprintf
-	char* old_name=malloc(1000);
+	char* old_name=malloc(strlen(path));
 	sprintf(old_name, "%s", path+file_name_pos);
-	char* new_name_ch=malloc(1000);
+	char* new_name_ch=malloc(strlen(path));
 	sprintf(new_name_ch, "%s", new_name+file_name_pos); // same dir, different name
 	int len_diff=strlen(new_name_ch)-strlen(old_name);
 	log_msg("rename_rr(): old_name=");
@@ -1008,9 +1009,9 @@ int rename_rr(const char* path, const char* new_name){
 	log_msg(parent_path);
 	// load parent dir inode
 	struct fuse_file_info * fi=malloc(sizeof(struct fuse_file_info));
-	fi->fh=NULL; // just to be safe
+	fi->fh=(u_int64_t)NULL; // just to be safe
 	int result=opendir_rr(parent_path, fi); // assuming this doesn't fail
-	if(fi->fh==NULL){
+	if(fi->fh==(u_int64_t)NULL){
 		free(fi);
 		free(old_name);
 		free(new_name_ch);
@@ -1018,7 +1019,7 @@ int rename_rr(const char* path, const char* new_name){
 		log_msg("rename_rr(): failed to get parent dir inode");
 		return -1;
 	}
-	char* parent_data=fi->fh; 
+	char* parent_data=(char*)fi->fh; 
 	
 	// extract the parent dir's block #
 	int parent_block_pos=0;
@@ -1026,13 +1027,12 @@ int rename_rr(const char* path, const char* new_name){
 		parent_block_pos++;
 	} 
 	parent_block_pos+=3; // move past :.:
-	char* parent_block_num=malloc(100); // hardcoded
+	char* parent_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // hardcoded 100 digits max for block #
 	parent_block_num[0]='\0'; // strlen=0
 	while(parent_data[parent_block_pos]!=','){
 		sprintf(parent_block_num+strlen(parent_block_num), "%c", parent_data[parent_block_pos]);
 		parent_block_pos++;
-	}
-	
+	}	
 	
 	// find position for old entry start and end
 	int dict_pos=1, old_name_start=0, old_name_end=0;
@@ -1044,10 +1044,6 @@ int rename_rr(const char* path, const char* new_name){
 			int cmp_pos=0;
 			if(parent_data[dict_pos+2]==old_name[cmp_pos]) { old_name_start=dict_pos+2; }
 			log_msg("rename_rr(): current pos");
-			char* one_char=malloc(2);
-			sprintf(one_char, "%c", parent_data[dict_pos+2]);
-			log_msg(one_char);
-			free(one_char);
 			while(parent_data[dict_pos+2]==old_name[cmp_pos]){
 				dict_pos++;
 				cmp_pos++;
@@ -1057,39 +1053,29 @@ int rename_rr(const char* path, const char* new_name){
 			while(parent_data[dict_pos]!=':') { dict_pos++; } // if success, this gets skipped, if fail, this moves to ':'
 			dict_pos++; // in either case, move past second ':' to get block #
 			if(cmp_pos==strlen(old_name) && end_of_name==':'){ // you have a match from start of entry to start of searching entry, and searching entry is not a substring of current entry matching from start
-				
-				log_msg("rename_rr(): made it here");
-				char* one_char2=malloc(2);
-				sprintf(one_char2, "%c", parent_data[dict_pos-2]);
-				log_msg(one_char2);
-				free(one_char);
-				
 				old_name_end=dict_pos-1; // at the semicolon
 				// ie, so "Fold" and "Folder" don't match
-				char* after_old_entry=malloc(4096); // hard coded
-				strncpy(after_old_entry, parent_data+old_name_end, 4096-old_name_end);
-				
+				char* after_old_entry=malloc(FILE_SIZE); // max upper limit
+				strncpy(after_old_entry, parent_data+old_name_end, FILE_SIZE-old_name_end);
 				log_msg("rename_rr(): after old entry");
 				log_msg(after_old_entry);
 				log_msg("rename_rr(): parent_data b/f fix");
 				log_msg(parent_data);
 				parent_data[old_name_start]='\0'; // string ends before the old name starts
-				sprintf(parent_data+strlen(parent_data), "%s", new_name_ch);
-				
-				if(len_diff>=0){ 
-					// +1 since old_name_start a ':', 1 to get past it, and new_name_ch to get past the full name
+				sprintf(parent_data+strlen(parent_data), "%s", new_name_ch);	
+				if(len_diff>=0){  // +1 since old_name_start a ':', 1 to get past it, and new_name_ch to get past the full name
 					// -1 since '\0' char usign sprintf, and so sum is 0
-					strncpy(parent_data+old_name_start+strlen(new_name_ch), after_old_entry, 4096-old_name_end-len_diff);
-						log_msg("rename_rr(): len_diff>0");
+					strncpy(parent_data+old_name_start+strlen(new_name_ch), after_old_entry, FILE_SIZE-old_name_end-len_diff);
+					log_msg("rename_rr(): len_diff>0");
 				}
 				else { // new name is shorter
 					log_msg("rename_rr(): len_diff<0");
 					// +1 since old_name_start a ':', 1 to get past it, and new_name_ch to get past the full name
 					// -1 since '\0' char usign sprintf, and so sum is 0
-					strncpy(parent_data+old_name_start+strlen(new_name_ch), after_old_entry, 4096-old_name_end); // copy over all of that data
+					strncpy(parent_data+old_name_start+strlen(new_name_ch), after_old_entry, FILE_SIZE-old_name_end); // copy over all of that data
 					int i;
 					for(i=0; i<abs(len_diff); i++){ // add zeros
-						parent_data[4096-abs(len_diff)+i-1]='0'; // overwrite the '\0'
+						parent_data[FILE_SIZE-abs(len_diff)+i-1]='0'; // overwrite the '\0'
 					}
 				}
 				log_msg("rename_rr(): parent_data a/f fix");
@@ -1100,7 +1086,7 @@ int rename_rr(const char* path, const char* new_name){
 		}
 		else if(parent_data[dict_pos]=='}' && parent_data[dict_pos+1]=='}'){
 			log_msg("rename_rr(): exit on directory not found in dict");
-			if(fi->fh!=NULL) { free(fi->fh); } 
+			if(fi->fh!=(u_int64_t)NULL) { free((char*)fi->fh); } 
 			free(fi);
 			free(parent_block_num);
 			free(new_name_ch);
@@ -1109,19 +1095,11 @@ int rename_rr(const char* path, const char* new_name){
 			return -ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
 		}
 	}
-	// copy over everything up to that
-	
-	// insert new name
-	
-	// copy over everything after that
-	// NOTE: if new name shorter, append 0s. if new name longer, omitt zeros
 
 	// open parent dir inode file, so can write to it
-	char * file_name=malloc(1000); // fix hard coding
+	char * file_name=malloc(bdir_path_size()); 
 	file_name[0]='\0';
-	sprintf(file_name, "%s", fuse_get_context()->private_data);
-	sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
-	sprintf(file_name+strlen(file_name), "%d", atoi(parent_block_num));
+	sprintf(file_name, "%s%s%d", (char*)fuse_get_context()->private_data, "/blocks/fusedata.", atoi(parent_block_num));
 	result = access(file_name, F_OK);
 	if(result!=0){
 		log_msg("mkdir_rr(): error opening parent block");
@@ -1133,10 +1111,10 @@ int rename_rr(const char* path, const char* new_name){
 		free(old_name);
 		free(parent_path);
 		free(fi);
-		return -2;
-	}
+		return -EACCES;
+	} // else fails silently
 	FILE* fh_parent=fopen(file_name, "w"); //overwrite everything
-	fwrite(parent_data, 4096, 1, fh_parent);
+	fwrite(parent_data, 1, FILE_SIZE, fh_parent);
 	fclose(fh_parent);	
 
 	free(file_name);
@@ -1150,10 +1128,22 @@ int rename_rr(const char* path, const char* new_name){
 }
 
 int rmdir_rr(const char * path){
+	/*
+	 rmdir_rr() removes the directory pointed to by path.
+	 * It does so by calling rm_file, specifying a directory 'd', and 'y'
+	 * this is the last link to the directory.
+	 * RETURN: returns whatever error code or success code rm_file does
+	*/
 	return rm_file(path, 'd', 'y');
 }
 
 int rm_file(const char* path, char dir_or_reg, char last_link){
+	/*
+	rm_file() takes in a path to a file to be removed, a character indicating its type ('d' for dir, 'f' for regular file)
+	* and removes that file. If it is a regular file and it is using an indirect block, and this is the last link being moved,
+	* then all the blocks of the indirect block list are removed. Otherwise the entry is just removed from the parent dir, and 
+	* unlink() takes care of decrementing the link count.
+	*/
 	log_msg("rm_file(): enter\r\nrm_file(): path=");
 	log_msg(path);
 	
@@ -1162,10 +1152,10 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 	while(path[parent_pos]!='/'){  parent_pos--; }
 	int file_name_pos=parent_pos+1; // to pull out file name
 	// copy over parent dir path,  dir name
-	char* parent_path=malloc(1000);
+	char* parent_path=malloc(strlen(path));
 	strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
 	parent_path[parent_pos+1]='\0'; // so acts like sprintf
-	char* dir_name=malloc(1000);
+	char* dir_name=malloc(strlen(path));
 	sprintf(dir_name, "%s", path+file_name_pos);
 	log_msg("rm_file(): dir_name=");
 	log_msg(dir_name);
@@ -1174,16 +1164,16 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 	
 	// pull up parent dir inode
 	struct fuse_file_info * fi=malloc(sizeof(struct fuse_file_info));
-	fi->fh=NULL; // just to be safe
-	int result=opendir_rr(parent_path, fi); // assuming this doesn't fail
-	if(fi->fh==NULL){
+	fi->fh=(u_int64_t)NULL; // just to be safe
+	opendir_rr(parent_path, fi); // assumes this doesn't fail
+	if(fi->fh==(u_int64_t)NULL){
 		free(fi);
 		free(dir_name);
 		free(parent_path);
 		log_msg("rm_file(): failed to get parent dir inode");
-		return -1;
+		return -ENOENT;
 	}
-	char* parent_data=(char *)fi->fh; 
+	char* parent_data=(char*)fi->fh; 
 	
 	// extract the parent dir's block #, so can open fusedata.X later to write back changes
 	int parent_block_pos=0;
@@ -1191,7 +1181,7 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 		parent_block_pos++;
 	} 
 	parent_block_pos+=3; // move past :.:
-	char* parent_block_num=malloc(100); // hardcoded
+	char* parent_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // hardcoded
 	parent_block_num[0]='\0'; // strlen=0
 	while(parent_data[parent_block_pos]!=','){
 		sprintf(parent_block_num+strlen(parent_block_num), "%c", parent_data[parent_block_pos]);
@@ -1199,12 +1189,12 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 	}
 	
 	// get the file's inode block # from parent entry
-	char* file_inode_block_num=malloc(100); // hard coding
+	char* file_inode_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // hard coding
 	file_inode_block_num[0]='\0'; // will be modified to what we need
 	int succeeded=find_block_num(parent_data, parent_block_pos, dir_name, file_inode_block_num);	// your entry must be after the d:.:xx , so save a bit of scanning
 	if(succeeded==-ENOENT || succeeded==-1){
-		log_msg("rm_file(): exit on serious error");
-		return -1;
+		log_msg("rm_file(): exit on error finding block # in parent directory");
+		return -ENOENT;
 	}
 	
 	// find dir name position in parent dir inode's dictionary, get rid of it, handle byte appending
@@ -1216,11 +1206,6 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 		if(parent_data[dict_pos]==dir_or_reg){ // so if called for dirs, only considers dirs as valid entries to check
 			int cmp_pos=0;
 			if(parent_data[dict_pos+2]==dir_name[cmp_pos]) { dir_name_start=dict_pos-1; } // get rid of the preceding comma, leave the trailing symbol, ',' or '}'
-			//~ log_msg("rm_file(): current pos");
-			//~ char* one_char=malloc(2);
-			//~ sprintf(one_char, "%c", parent_data[dict_pos+2]);
-			//~ log_msg(one_char);
-			//~ free(one_char);
 			while(parent_data[dict_pos+2]==dir_name[cmp_pos]){ // see how many bytes match, in case of subs trings
 				dict_pos++;
 				cmp_pos++;
@@ -1230,25 +1215,22 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 			while(parent_data[dict_pos]!=':') { dict_pos++; } // if success, this gets skipped, if fail, this moves to ':'
 			dict_pos++; // in either case, move past second ':' to get block #
 			if(cmp_pos==strlen(dir_name) && end_of_name==':'){ // you have a match from start of entry to start of searching entry, and searching entry is not a substring of current entry matching from start
-				log_msg("rm_file(): made it here");
 				while(parent_data[dict_pos]!=',' && parent_data[dict_pos]!='}') { dict_pos++; }
 				dir_name_end=dict_pos; // at the comma // ie, so "Fold" and "Folder" don't match
-				char* after_old_entry=malloc(4096); // hard coded
-				strncpy(after_old_entry, parent_data+dir_name_end, 4096-dir_name_end);
+				char* after_old_entry=malloc(FILE_SIZE); // hard coded
+				strncpy(after_old_entry, parent_data+dir_name_end, FILE_SIZE-dir_name_end);
 				log_msg("rm_file(): after old entry");
 				log_msg(after_old_entry);
 				log_msg("rm_file(): parent_data b/f fix");
 				log_msg(parent_data);
 				parent_data[dir_name_start]='\0'; // string ends before the old name starts
-				log_msg("rm_file(): len_diff<0");
-				// +1 since dir_name_start a ':', 1 to get past it, and new_name_ch to get past the full name
+				log_msg("rm_file(): len_diff<0"); // +1 since dir_name_start a ':', 1 to get past it, and new_name_ch to get past the full name
 				// -1 since '\0' char usign sprintf, and so sum is 0
-				strncpy(parent_data+dir_name_start, after_old_entry, 4096-dir_name_end); // copy over all of that data
+				strncpy(parent_data+dir_name_start, after_old_entry, FILE_SIZE-dir_name_end); // copy over all of that data
 				int i;
 				for(i=0; i<abs(len_diff); i++){ // add zeros
-					parent_data[4096-abs(len_diff)+i-1]='0'; // overwrite the '\0'
-				}
-				
+					parent_data[FILE_SIZE-abs(len_diff)+i-1]='0'; // overwrite the '\0'
+				}				
 				log_msg("rm_file(): parent_data a/f fix");
 				log_msg(parent_data);
 				free(after_old_entry);
@@ -1257,7 +1239,7 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 		}
 		else if(parent_data[dict_pos]=='}' && parent_data[dict_pos+1]=='}'){
 			log_msg("rm_file(): exit on directory not found in dict");
-			if(fi->fh!=NULL) { free(fi->fh); } 
+			if(fi->fh!=(u_int64_t)NULL) { free((char*)fi->fh); } 
 			free(fi);
 			free(parent_block_num);
 			free(dir_name);
@@ -1265,39 +1247,35 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 			return -ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
 		}
 	}
-	// call func to put block # back on free block list
-	// find pos in path that separates parent dir and file name
 
 	// write parent data to its block file
 	int okay=flush_block_file(parent_data, atoi(parent_block_num));
-	if(okay<0) {  return okay; } // message alreadr logged
+	if(okay<0) {  return okay; } // message alreadry logged
 
 	// get file's inode data
 	if(dir_or_reg=='f'){
 		FILE* curr_file=open_block_file(atoi(file_inode_block_num));
-		char* curr_file_data=malloc(4096);
+		char* curr_file_data=malloc(FILE_SIZE);
 		curr_file_data[0]='\0';
-		fread(curr_file_data, 4096, 1, curr_file);
+		fread(curr_file_data, 1, FILE_SIZE, curr_file);
 		log_msg("rm_file(): curr_file_data=");
 		log_msg(curr_file_data);
 		int indirect=get_indirect(curr_file_data);
 		int dbn_int=get_data_block_num(curr_file_data);
 		fclose(curr_file);	
-		char* data_block_num=malloc(100);
+		char* data_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // max num digits for block #
 		sprintf(data_block_num, "%d", dbn_int);
 		if(last_link=='y'){ 
 			// go into the inode block, find the data block
-			// if indirect==1, add_free_block for each entry in there, write over nothing
-			// whether its indirect=1 or 0, free up the data block, and the inode block
+			// if indirect==1, add_free_block for each entry in there, do not clear indirect block contents
+			// whether its indirect=1 or 0, free up the data block, and the inode block afterward
 			if(indirect==1){
 				int success=free_indirect_blocks(data_block_num);
 				if(success<0){ return success; } // error, already logged
 			}
 			// if indirect==0, just add_free_block the data block and the inode block
-			add_free_block(file_inode_block_num); // inode block
+			add_free_block(file_inode_block_num);
 			add_free_block(data_block_num);
-			// if indirect=1, go into the indirect block
-			// add_free_block for each entry there, then the indirect block itself, then the inode block
 		}
 			free(curr_file_data);
 	}
@@ -1314,12 +1292,16 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 }
 
 int find_block_num(char* inode_data, int inode_pos, char* entry_name_to_find, char* block_num_of_entry){
+	/*
+	find_block_num() takes loaded inode data, your data position in it, what entry you're looking for,
+	*  and stores the block # of that entry in a string you pass in.
+	* RETURN: 0 if success, else appropriate ERRNO error code
+	*/
 	block_num_of_entry[0]='\0';
-	// takes loaded inode data, your data pos, what entry you're looking for, and stores the block # in a string you pass in
 	log_msg("find_block_num(): enter");
 	while(1){ // scan all entries or until end of dictionary
 		inode_pos++;
-		if(inode_data[inode_pos]=='d'||inode_data[inode_pos]=='f'){ // so can getattr_rr better // +1 is the :
+		if(inode_data[inode_pos]=='d'||inode_data[inode_pos]=='f'){ 
 			int cmp_pos=0;
 			while(inode_data[inode_pos+2]==entry_name_to_find[cmp_pos]){
 				inode_pos++;
@@ -1329,7 +1311,7 @@ int find_block_num(char* inode_data, int inode_pos, char* entry_name_to_find, ch
 			inode_pos+=2; // if success, inode_pos+2=':', if fail, inode_pos='d', so move past it and first ':'
 			while(inode_data[inode_pos]!=':') { inode_pos++; } // if success, this gets skipped, if fail, this moves to ':'
 			inode_pos++; // in either case, move past second ':' to get block #
-			if(cmp_pos==strlen(entry_name_to_find) && end_of_name==':'){ // you have a match from start of entry to start of searching entry, and searching entry is not a substring of current entry matching from start
+			if(cmp_pos==strlen(entry_name_to_find) && end_of_name==':'){ //full match, one is not a substring of the other
 				log_msg("find_block_num(): before next block num"); // ie, so "Fold" and "Folder" don't match
 				log_msg(block_num_of_entry);
 				block_num_of_entry[0]='\0';
@@ -1347,15 +1329,20 @@ int find_block_num(char* inode_data, int inode_pos, char* entry_name_to_find, ch
 			return -ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
 		}
 	}
-	return -1; // what even happened if you're here
+	return -1; // inexplicable error
 }
 	
 int flush_block_file(char* block_data, int block_num){
+	/*
+	flush_block_file() takes in some block_data and a block number,
+	* opens the block file, and flushes the data to the block file.
+	* RETURN: 0 if success, else appropriat ERRNO error code.
+	*/
 	log_msg("flush_block_file(): enter");
 	
 	FILE* fh=open_block_file(block_num);
-	if(fh<0) { return fh; } // error code
-	fwrite(block_data, 4096, 1, fh);
+	if(fh<0) { return (long int)fh; } // error code
+	fwrite(block_data, 1, FILE_SIZE, fh);
 	fclose(fh);	
 	
 	log_msg("flush_block_file(): exit");
@@ -1363,12 +1350,13 @@ int flush_block_file(char* block_data, int block_num){
 }
 
 FILE* open_block_file(int block_num){
+	/*
+	open_block_file() takes in a block # and returns a FILE* to that opened block file.
+	*/
 	log_msg("open_block_file(): enter");
-	char * file_name=malloc(1000); // fix hard coding
+	char * file_name=malloc(bdir_path_size());
 	file_name[0]='\0';
-	sprintf(file_name, "%s", (char *)fuse_get_context()->private_data);
-	sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
-	sprintf(file_name+strlen(file_name), "%d", block_num);
+	sprintf(file_name, "%s%s%d", (char*)fuse_get_context()->private_data, "/blocks/fusedata.", block_num);
 	log_msg("open_block_file: file_name=");
 	log_msg(file_name);
 	
@@ -1378,7 +1366,7 @@ FILE* open_block_file(int block_num){
 		log_msg("open_block_file(): file_name=");
 		log_msg(file_name);
 		free(file_name);
-		return -1;
+		return (FILE*)-EACCES;
 	}
 	FILE* fh=fopen(file_name, "r+"); 
 	free(file_name);
@@ -1387,6 +1375,9 @@ FILE* open_block_file(int block_num){
 }	
 
 int get_indirect(char* file_data){
+	/*
+	get_indirect() takes in a regular file's inode data and returns a 1 if it has an indirect blcok and a 0 otherwise;
+	*/
 	log_msg("get_indirect(): enter\r\nget_indirect(): file_data=");
 	log_msg(file_data);
 	int file_pos=0;
@@ -1406,13 +1397,17 @@ int get_indirect(char* file_data){
 }
 
 int get_data_block_num(char* file_data){
-	log_msg("get_data_block_num(): enter\r\get_data_block_num(): file_data=");
+	/*
+	get_data_block_num() takes in a regular file's inode data and returns the location of the data block,
+	* whether its an indirect block or a direct block.
+	*/
+	log_msg("get_data_block_num(): enter\r\nget_data_block_num(): file_data=");
 	log_msg(file_data);
 	int file_pos=0;
 	while(file_data[file_pos]!='l' || file_data[file_pos+1]!='o' || file_data[file_pos+2]!='c'){ file_pos++;}
 	while(file_data[file_pos]!=':') { file_pos++; }
 	file_pos++; // move past the : 
-	char* data_block=malloc(100); 
+	char* data_block=malloc(MAX_DIGITS_BLOCK_NUM); // max 100 digits for block # 
 	data_block[0]='\0';
 	while(file_data[file_pos]!='}'){
 		sprintf(data_block+strlen(data_block), "%c", file_data[file_pos]);
@@ -1425,29 +1420,25 @@ int get_data_block_num(char* file_data){
 }
 
 int add_free_block(char* block_num){
-	// must leave a ',' if NO blocks left in this chunk, so "first free block" doesn't crash
-	// simply delete everything, but check if after your comma, if there is a '0'
-	// no # starts with a leading 0, so thats teh signal to leave your comma
+	/*
+	add_free_block() takes in a block number that has been freed and inserts it into the appropriate free block list.
+	* NOTE: a leading ',' is left in any empty free block list file
+	* RETURN: 0 if successful
+	*/
 	log_msg("add_free_block(): enter\r\nadd_free_block(): block #=");
 	log_msg(block_num);	
-int current_block_num=1+(atoi(block_num)/400); // hard coded? // 0 is superblock
-	char* full_path=malloc(1000); // definitely hard coded
+	int current_block_num=1+(atoi(block_num)/PTRS_PER_BLK); 
+	char* full_path=malloc(bdir_path_size()); // definitely hard coded
 	full_path[0]='\0';
 	
-	sprintf(full_path, "%s", fuse_get_context()->private_data);
-	sprintf(full_path+strlen(full_path), "%s", "/blocks/fusedata.");
+	sprintf(full_path, "%s%s", (char*)fuse_get_context()->private_data, "/blocks/fusedata.");
 	int full_path_pos=strlen(full_path);
-	
-
-	sprintf(full_path+full_path_pos, "%d", current_block_num);
-	
+	sprintf(full_path+full_path_pos, "%d", current_block_num);	
 	int result=access(full_path, F_OK);
 	if(result==0){
-			log_msg("add_free_block(): add free block2");
 		FILE* fh=fopen(full_path, "r+");
-		char* file_data=malloc(4096); // hard coded
-		fread(file_data, 4096, 1, fh); // hard coded
-		log_msg("add_free_block(): add free block3");
+		char* file_data=malloc(FILE_SIZE); 
+		fread(file_data, 1, FILE_SIZE, fh); 
 		int file_pos=0;
 		while(file_data[file_pos]!=',' || file_data[file_pos+1]!='0' ) { file_pos++; }
 		sprintf(file_data+file_pos+1, "%s", block_num);
@@ -1455,30 +1446,28 @@ int current_block_num=1+(atoi(block_num)/400); // hard coded? // 0 is superblock
 		file_data[strlen(file_data)]=','; // get rid of the \0
 		file_data[old_len+1]='0';
 		fseek(fh, 0, SEEK_SET);
-		int written=fwrite(file_data, 4096, 1, fh);
-		
-	
-		fclose(fh);
-		
-		free(file_data);
-		
-		return 0;
+		fwrite(file_data, 1, FILE_SIZE, fh); // assumes success
+		fclose(fh);		
+		free(file_data);	
+		return 0; // success
 	}
-	log_msg("add_free_block(): add free block4");
 	free(full_path);
-	
-	return -1;
+	return -EACCES;
 }
 
 int free_indirect_blocks(char* block_num){
+	/*
+	free_indirect_blocks() frees all the blocks in the list stored at indirect block # block_num.
+	* RETURN: 0 if success, else appropriate error code
+	*/
 	FILE* fh=open_block_file(atoi(block_num));
-	if(fh<0) { return fh; } // error, already logged
+	if(fh<0) { return (long int)fh; } // error, already logged
 	
-	char* file_data=malloc(4096);
+	char* file_data=malloc(FILE_SIZE);
 	file_data[0]='\0';
-	fread(file_data, 4096, 1, fh);
+	fread(file_data, 1, FILE_SIZE, fh);
 	
-	char* current_block=malloc(100);
+	char* current_block=malloc(MAX_DIGITS_BLOCK_NUM); // max 100 digits for block num #
 	current_block[0]='\0';
 	int file_pos=0;
 	while(file_pos==0 || file_data[file_pos-1]!=',' || file_data[file_pos]!='0'){
@@ -1497,31 +1486,30 @@ int free_indirect_blocks(char* block_num){
 }
 
 int unlink_rr(const char * path){
+	/*
+	unlink_rr() unlinks the file pointed at by path.
+	* RETURN: 0 if success, otherwise appropriate ERRNO error code.
+	*/
 	// load file, load link count #
 	log_msg("unlink_rr(): enter");
 	struct fuse_file_info* fi = malloc(sizeof(struct fuse_file_info));
-	int caught=opendir_rr(path, fi);
-	if(fi==NULL||fi->fh==NULL){
+	opendir_rr(path, fi); // assumes this worked
+	if(fi==NULL||fi->fh==(u_int64_t)NULL){
 		log_msg("unlink_rr(): file inode not found");
-		return -1;
+		return -ENOENT;
 	}
-	log_msg("unlink_rr(): 1");
-	log_msg(fi->fh);
-		
-	char* inode_data=(char *)fi->fh;
+	log_msg("unlink_rr(): fi->fh=");
+	log_msg((char*)fi->fh);
+	char* inode_data=(char*)fi->fh;
 	mod_link_count(inode_data, -1);
-
-		log_msg("unlink_rr(): 3.5");
-		log_msg(inode_data);
-	// get block # from inode
-	int block_num=get_block_num(path, 'f');
+	log_msg("unlink_rr(): inode_data=");
+	log_msg(inode_data);
+	int block_num=get_block_num(path, 'f');	// get block # from inode
 	
 	// open up the inode block's file on the disk, write back these changes
 	char * file_name=malloc(1000); // fix hard coding
 	file_name[0]='\0';
-	sprintf(file_name, "%s", (char *)fuse_get_context()->private_data);
-	sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
-	sprintf(file_name+strlen(file_name), "%d", block_num );
+	sprintf(file_name, "%s%s%d", (char *)fuse_get_context()->private_data, "/blocks/fusedata.", block_num);
 	int result = access(file_name, F_OK);
 	if(result!=0){
 		log_msg("mkdir_rr(): error opening parent block");
@@ -1529,27 +1517,21 @@ int unlink_rr(const char * path){
 		log_msg(file_name);
 		free(file_name);
 		free(fi);
-		return -2;
+		return -EACCES;
 	}
-	
-		log_msg("unlink_rr(): 4");
-		log_msg(file_name);
-		log_msg(inode_data);
 	FILE* fh=fopen(file_name, "w"); //overwrite everything
 	fseek(fh, 0, SEEK_SET);
-	fwrite(inode_data, 4096, 1, fh);
+	fwrite(inode_data, 1, FILE_SIZE, fh);
 	fclose(fh);	
-	
-	
-		log_msg("unlink_rr(): 5");
-	
 	int new_link_count=get_link_count(inode_data);
+
 	// call rm_file to remove it from the parent entry
 	// if linkcount==0, call with 'y' to free up blocks
 	if(new_link_count==0){ rm_file(path, 'f', 'y'); }
 	else { rm_file(path, 'f', 'n'); }
-			
-	log_msg("unlink_rr(): 6");
+	
+	free(file_name);
+	if(fi->fh!=(u_int64_t)NULL){ free((char*)fi->fh); }
 	free(fi);
 	
 	return 0;
@@ -1738,7 +1720,7 @@ int insert_parent_entry(const char* path, int block_num){
 		parent_block_pos++;
 	} 
 	parent_block_pos+=3; // move past :.:
-	char* parent_block_num=malloc(100); // 100 max num digits for max block #
+	char* parent_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // 100 max num digits for max block #
 	parent_block_num[0]='\0'; // strlen=0
 	while(parent_data[parent_block_pos]!=','){
 		sprintf(parent_block_num+strlen(parent_block_num), "%c", parent_data[parent_block_pos]);
@@ -1748,7 +1730,7 @@ int insert_parent_entry(const char* path, int block_num){
 	// write entry into parent dir data
 	parent_block_pos=0;
 	while(parent_data[parent_block_pos]!='}' || parent_data[parent_block_pos+1]!='}'){ parent_block_pos++; }
-	char* new_entry=malloc(100);
+	char* new_entry=malloc(MAX_DIGITS_BLOCK_NUM);
 	new_entry[0]='\0';
 	sprintf(new_entry, "%s", ",f:");
 log_msg("\r\n1\r\n");
@@ -1800,7 +1782,7 @@ int total_free_blocks(){
 	int path_pos=strlen(blocks_dir); // since only change digits at the end
 	
 	// create each free block file, fill it with the appropriate free block #s
-	char* curr_block=malloc(100); // no more than 100 digits for block #
+	char* curr_block=malloc(MAX_DIGITS_BLOCK_NUM); // no more than 100 digits for block #
 	curr_block[0]='\0';
 	int free_blocks_total=0;
 	int j;
@@ -1864,7 +1846,7 @@ int get_link_count(char* file_data){
 	while(file_data[file_pos-1]!=':'){ file_pos++; }
 
 	// copy over link count
-	char* count=malloc(100); // max 100 digits for num links
+	char* count=malloc(MAX_DIGITS_BLOCK_NUM); // max 100 digits for num links
 	count[0]='\0';
 	while(file_data[file_pos]!=','){
 		sprintf(count+strlen(count), "%c", file_data[file_pos]);
@@ -1895,7 +1877,7 @@ int mod_link_count(char* file_data, int change){
 	int colon_pos=file_pos-1;
 
 	// copy over link count
-	char* count=malloc(100);
+	char* count=malloc(MAX_DIGITS_BLOCK_NUM);
 	count[0]='\0';
 	while(file_data[file_pos]!=','){
 		sprintf(count+strlen(count), "%c", file_data[file_pos]);
@@ -1938,6 +1920,7 @@ int mod_link_count(char* file_data, int change){
 int link_rr(const char *path, const char *newpath){
 	/*
 	link_rr() creates a link from the inode pointed at by "path" at location "newpath".
+	* NOTE: linking directories simply does not work
 	* RETURN: 0 if success, error code otherwise. 
 	*/
 	log_msg("link_rr(): enter\r\nlink_rr(): newpath=");
@@ -1957,7 +1940,7 @@ int link_rr(const char *path, const char *newpath){
 	
 	// get path's block #, and insert a new entry into the new path's parent directory
 	char* parent_data=(char*)fi->fh;
-	char* file_block_num=malloc(100); // 100 digit limit for block #
+	char* file_block_num=malloc(MAX_DIGITS_BLOCK_NUM); // 100 digit limit for block #
 	success=find_block_num(parent_data, 0, orig_name, file_block_num);
 	if(success<0){ return success; }
 	success=insert_parent_entry(newpath, atoi(file_block_num)); 
