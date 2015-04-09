@@ -729,47 +729,44 @@ int releasedir_rr(const char * path, struct fuse_file_info * fi){
 }
 
 int mkdir_rr(const char *path, mode_t mode){
-	
+	/*
+	mkdir_rr() takes in a file path and creates a directory at that path if the directory does not already exist.
+	* The mode paramter is ignored for this implementation, as modes are not used.
+	* NOTE: if a file exists of the same name as the directory to make, the directory will not be made.
+	* NOTE: does not check if there is enough space in the parent directory for an additional entry.
+		* If caller pushes these limits, the resulting behavior is not guaranteed to be stable.
+	* NOTE: no behavior guaranteed for case of mkdir d1/d2 where d1 and d2 both don't exist.
+	* RETURN: 0 if success, else appropriate error code following ERRNO standard error codes.
+	*/
 	// doesnt allow for making dirs of same name as files
 	log_msg("mkdir_rr(): enter\r\nmkdir_rr(): path=");
 	log_msg(path);
 	
-	// looks like mkdir not even called if already exists, but just in case
+	// defensively verify that directory does not already exist
 	struct fuse_file_info * fi=malloc(sizeof(struct fuse_file_info));
 	int result=opendir_rr(path, fi);
 	if(result!=-ENOENT){ 
-		log_msg("mkdir_rr(): exit, file already exists/error");
-		// log the inode's data if it does
-		if(fi->fh!=NULL) { 
+		log_msg("mkdir_rr(): exit, file already exists/error"); // log the inode's data if it does
+		if(fi->fh!=(u_int64_t)NULL) { 
 			log_msg("mkdir_rr(): fi->fh="); 
-			log_msg(fi->fh); 
-			free(fi->fh);
+			log_msg((char*)fi->fh); 
+			free((void*)fi->fh);
 		}
 		free(fi);
-		return -1;
+		return -EEXIST; 
 	}
 	
-	log_msg("mkdir_rr(): SUCCESS/dir does not already exist");
-	// if not, get parent directoy node // check if enough space to put in file name and not exceed 4096 bytes.
-	// fail if no room left
-	
-	
-	// get the first free block off the free block list
-	
+	log_msg("mkdir_rr(): SUCCESS. dir does not already exist");	
 	int free_block=first_free_block();
 	char* debug=malloc(100);
-	debug[0]='\0';
-	sprintf(debug+strlen(debug), "%d", free_block);
+	sprintf(debug, "%d", free_block);
 	log_msg("mkdir_rr(): free_block #=");
 	log_msg(debug);
 		
-	// open that block, get fi->fh as the 4096 bytes of 0s
-	char* file_data=malloc(4096); // hard coded
-	char* file_name=malloc(1000); // hard coded
-	file_name[0]='\0';
-	sprintf(file_name, "%s", (char *)fuse_get_context()->private_data);
-	sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
-	sprintf(file_name+strlen(file_name), "%d", free_block);
+	// open that block, get fi->fh as the FILE_SIZE bytes of 0s
+	char* file_data=malloc(FILE_SIZE); 
+	char* file_name=malloc(bdir_path_size()); 
+	sprintf(file_name, "%s%s%d", (char*)fuse_get_context()->private_data, "/blocks/fusedata.", free_block);
 	result = access(file_name, F_OK);
 	if(result!=0){
 		log_msg("mkdir_rr(): error opening free block");
@@ -779,32 +776,29 @@ int mkdir_rr(const char *path, mode_t mode){
 		free(debug);
 		free(file_data);
 		free(file_name);
-		return -2;
+		return -EACCES;
 	}
 	FILE* fh=fopen(file_name, "r+");
-	fread(file_data, 4096, 1, fh); // hard coded
+	fread(file_data, 1, FILE_SIZE, fh); // hard coded
 	
 	// load the parent dir's inode
 	int parent_pos=strlen(path)-1; // so starts at last char
-	while(path[parent_pos]!='/'){ 
-		parent_pos--; 
-	}
-	char* parent_path=malloc(1000);
+	while(path[parent_pos]!='/'){ parent_pos--; }
+	char* parent_path=malloc(strlen(path)); // upper limit 
 	strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
 	parent_path[parent_pos+1]='\0';
-	result=opendir_rr(parent_path, fi); // assuming this doesn't fail
+	result=opendir_rr(parent_path, fi); // assumes this doesn't fail
 	free(parent_path);
 	int new_dir_pos=parent_pos+1;
-	// maybe should check if try to mk two dirs at once that dont exist?
 
 	// extract the parent dir's block #
-	char* parent_data=fi->fh; // no malloc needed
+	char* parent_data=(char*)fi->fh; // no malloc needed
 	int parent_block_pos=0;
 	while(parent_data[parent_block_pos]!=':' || parent_data[parent_block_pos+1]!='.' || parent_data[parent_block_pos+2]!=':'){
 		parent_block_pos++;
 	} 
 	parent_block_pos+=3; // move past :.:
-	char* parent_block_num=malloc(100); // hardcoded
+	char* parent_block_num=malloc(100); // upper limit for num digits in block #
 	parent_block_num[0]='\0'; // strlen=0
 	while(parent_data[parent_block_pos]!=','){
 		sprintf(parent_block_num+strlen(parent_block_num), "%c", parent_data[parent_block_pos]);
@@ -820,27 +814,24 @@ int mkdir_rr(const char *path, mode_t mode){
 	log_msg(file_data);
 	// write the new dir file's data out to disk
 	fseek(fh,0,SEEK_SET);
-	int success=fwrite(file_data, 4096, 1, fh);
+	int success=fwrite(file_data, 1, FILE_SIZE, fh);
 	fclose(fh);
 	
 	// write entry into parent dir data
 	parent_block_pos=0;
 	while(parent_data[parent_block_pos]!='}' || parent_data[parent_block_pos+1]!='}'){ parent_block_pos++; }
-	char* new_entry=malloc(100);
+	char* new_entry=malloc(strlen(path)); // upper limit 
 	new_entry[0]='\0';
 	sprintf(new_entry, "%s", ",d:");
 	snprintf(new_entry+strlen(new_entry), strlen(path)-new_dir_pos+1, "%s", path+new_dir_pos);
-	sprintf(new_entry+strlen(new_entry), "%s", ":");
-	sprintf(new_entry+strlen(new_entry), "%d", free_block); 
-	sprintf(new_entry+strlen(new_entry), "%s", "}}");
+	sprintf(new_entry+strlen(new_entry), "%s%d%s", ":", free_block, "}}");
 	sprintf(parent_data+parent_block_pos, "%s", new_entry);
 	parent_data[strlen(parent_data)]='0'; // so not '\0' and truncated
 	free(new_entry);
+
 	// form file name of parent dir, open, and write entry
 	file_name[0]='\0';
-	sprintf(file_name, "%s", fuse_get_context()->private_data);
-	sprintf(file_name+strlen(file_name), "%s", "/blocks/fusedata.");
-	sprintf(file_name+strlen(file_name), "%d", atoi(parent_block_num));
+	sprintf(file_name, "%s%s%d", (char*)fuse_get_context()->private_data, "/blocks/fusedata.", atoi(parent_block_num));
 	result = access(file_name, F_OK);
 	if(result!=0){
 		log_msg("mkdir_rr(): error opening parent block");
@@ -851,10 +842,10 @@ int mkdir_rr(const char *path, mode_t mode){
 		free(file_data);
 		free(file_name);
 		free(parent_block_num);
-		return -2;
+		return -EACCES;
 	}
 	FILE* fh_parent=fopen(file_name, "w"); //overwrite everything
-	fwrite(parent_data, 4096, 1, fh_parent);
+	fwrite(parent_data, 1, FILE_SIZE, fh_parent);
 	fclose(fh_parent);	
 	
 	// only remove the free block from the list if this all succeeded
@@ -876,66 +867,46 @@ int mkdir_rr(const char *path, mode_t mode){
 }
 	
 int first_free_block(){
+	/*
+	first_free_block returns an int representing the first free block available in the file system.
+	* When all free blocks are removed from the free block list, a leading ',' is left in place so that
+	* it can be determined there are no free blocks left from examining the first two characters.
+	*/
 	log_msg("first_free_block(): enter");
-	int current_block_num=1; // hard coded?
+	int current_block_num=1;
 	int first_free=-1;
-	
-	log_msg("first_free_block(): enter1");
-	char* full_path=malloc(1000); // definitely hard coded
-	
-	log_msg("first_free_block(): ente2r");
+	char* full_path=malloc(bdir_path_size());
 	full_path[0]='\0';
-	sprintf(full_path, "%s", (char *)fuse_get_context()->private_data);
-	sprintf(full_path+strlen(full_path), "%s", "/blocks/fusedata.");
-	
-	log_msg("first_free_block(): enter3");
+	sprintf(full_path, "%s%s", (char *)fuse_get_context()->private_data, "/blocks/fusedata.");
 	int full_path_pos=strlen(full_path);
-	while(current_block_num < 26) { // fix hard coding
-		
-	log_msg("first_free_block(): enter4");
+	while(current_block_num < FREE_BLK_FILES+1) { 
 		sprintf(full_path+full_path_pos, "%d", current_block_num);
-		
-	log_msg("first_free_block(): enter5");
 		int result=access(full_path, F_OK);
-		
-	log_msg("first_free_block(): enter6");
 		if(result==0){
-				log_msg("first_free_block(): enter7");
 			FILE* fh=fopen(full_path, "r");
-				log_msg("first_free_block(): enter8");
-			char* file_data=malloc(4096); // hard coded
-				log_msg("first_free_block(): enter9");
-			fread(file_data, 4096, 1, fh); // hard coded
-				log_msg("first_free_block(): enter10");
+			char* file_data=malloc(FILE_SIZE); 
+			fread(file_data, 1, FILE_SIZE, fh); 
 			int file_pos=0;
-				log_msg("first_free_block(): enter11");
-			char * first_free_ch=malloc(1000); // FIX HARD CODING
+			char * first_free_ch=malloc(100); // max 100 digits for num digits in block #
 			first_free_ch[0]='\0';
-				log_msg("first_free_block(): enter12");
-				log_msg(file_data);
+			log_msg("first_free_block(): opened file data=");
+			log_msg(file_data);
 			while(file_data[file_pos]!=','){
 				sprintf(first_free_ch+strlen(first_free_ch), "%c", file_data[file_pos]);
 				file_pos++;
 			}
-			
-				log_msg("first_free_block(): enter13");
-			if(first_free_ch[0]!='\0'){ // if there is a free block in this block
-				
-				log_msg("first_free_block(): enter14");
+			if(first_free_ch[0]!='\0'){ // if there is a free block in this block				
 				first_free=atoi(first_free_ch);
+				log_msg("first_free_block(): exit, found a free block=");
+				log_msg(first_free_ch);
 				free(file_data);
 				free(first_free_ch);
 				free(full_path);
-				log_msg("first_free_block(): exit, found a free block");
 				return first_free;
 			}
-			
-				log_msg("first_free_block(): enter15");
 			free(file_data);
 			free(first_free_ch);
-		}
-		
-				log_msg("first_free_block(): enter16");
+		} // you've found no blocks in this file, proceed to next free block file
 		current_block_num++;
 	}
 	log_msg("first_free_block(): exit, found no blocks");
@@ -944,116 +915,70 @@ int first_free_block(){
 }	
 
 void fill_dir_inode(char* file_data, int parent_block, int free_block){ // add SIZE
-	// sprintf all the expected values, follow create_root_dir basically, but different field order
+	/*
+	fill_dir_inode() takes in a char* to a dir inode's data, the # of its parent block, the # of its free block,
+	* and appropriately fills in all the fields for the directory inode.
+	* RETURN: none
+	*/
 	time_t current_time;
 	time(&current_time);
-	sprintf(file_data, "%s", "{size:"); // have to update this with code
-	sprintf(file_data+strlen(file_data), "%d", 4096 ); // FIX HARD CODING
-	sprintf(file_data+strlen(file_data), "%s", ",uid:");
-	sprintf(file_data+strlen(file_data), "%d", 1); // this is okay hard coding
-	sprintf(file_data+strlen(file_data), "%s", ",gid:");
-	sprintf(file_data+strlen(file_data), "%d", 1); // this is okay hard coding
-	sprintf(file_data+strlen(file_data), "%s", ",mode:");
-	sprintf(file_data+strlen(file_data), "%d", 16877); // this is okay hard coding
-	sprintf(file_data+strlen(file_data), "%s", ",atime:");
-	sprintf(file_data+strlen(file_data), "%d", (int)current_time); 
-	sprintf(file_data+strlen(file_data), "%s", ",ctime:");
-	sprintf(file_data+strlen(file_data), "%d", (int)current_time); 
-	sprintf(file_data+strlen(file_data), "%s", ",mtime:");
-	sprintf(file_data+strlen(file_data), "%d", (int)current_time);
-	sprintf(file_data+strlen(file_data), "%s", ",linkcount:");
-	sprintf(file_data+strlen(file_data), "%d", 2); // this is okay, you link to yourself twice
-	sprintf(file_data+strlen(file_data), "%s", ",file_name_to_inode_dict:{d:.:");
-	sprintf(file_data+strlen(file_data), "%d", free_block); // FIX HARD CORDING
-	sprintf(file_data+strlen(file_data), "%s", ",d:..:");
-	sprintf(file_data+strlen(file_data), "%d", parent_block); // FIX HARD CORDING
-	sprintf(file_data+strlen(file_data), "%s", "}}");
+	sprintf(file_data, "%s%d%s", "{size:", FILE_SIZE, ",uid:1,gid:1,mode:16877,atime:"); // have to update this with code
+	sprintf(file_data+strlen(file_data), "%d%s%d%s%d", (int)current_time, ",ctime:", (int)current_time, ",mtime:", (int)current_time);
+	sprintf(file_data+strlen(file_data), "%s%d%s%d%s", ",linkcount:2,file_name_to_inode_dict:{d:.:", free_block, ",d:..:", parent_block, "}}"); 
 }
 
 int remove_free_block(int rm_block){
-	// must leave a ',' if NO blocks left in this chunk, so "first free block" doesn't crash
-	// simply delete everything, but check if after your comma, if there is a '0'
-	// no # starts with a leading 0, so thats teh signal to leave your comma
-	int current_block_num=1; // hard coded?
-	char* full_path=malloc(1000); // definitely hard coded
-	full_path[0]='\0';
-	
-	sprintf(full_path, "%s", fuse_get_context()->private_data);
-	sprintf(full_path+strlen(full_path), "%s", "/blocks/fusedata.");
+	/*
+	remove_free_block() removes the given block number from the free block list, wherever it may reside.
+	* If that number is the last free block in a given list, a leading ',' is left so that a leading ',0'
+	* indicates a free block list with no free blocks left. No block number contains a leading 0,
+	* thus this indicates the end of the list.
+	* RETURN: 0 if success, -1 otherwise if block not found
+	*/
+	int current_block_num=1;
+	char* full_path=malloc(bdir_path_size());
+	sprintf(full_path, "%s%s", (char*)fuse_get_context()->private_data, "/blocks/fusedata.");
 	int full_path_pos=strlen(full_path);
 	
-	while(current_block_num < 26) { // fix hard coding
+	while(current_block_num < FREE_BLK_FILES+1) { 
 		sprintf(full_path+full_path_pos, "%d", current_block_num);
 		int result=access(full_path, F_OK);
 		if(result==0){
 			FILE* fh=fopen(full_path, "r+");
-			char* file_data=malloc(4096); // hard coded
-			fread(file_data, 4096, 1, fh); // hard coded
-			
+			char* file_data=malloc(FILE_SIZE);
+			fread(file_data, 1, FILE_SIZE, fh); 
 			int file_pos=0;
-			char * current_block_num=malloc(1000); // FIX HARD CODING
-			current_block_num[0]='\0';
-			// search until the last free number
-			while(file_pos ==0 || file_data[file_pos-1]!=',' || file_data[file_pos]!='0'){
-				while(file_data[file_pos]!=','){
+			char * current_block_num=malloc(100); // max 100 digits in max block #
+			current_block_num[0]='\0';	// search until the last free number
+			while(file_pos == 0 || file_data[file_pos-1]!=',' || file_data[file_pos]!='0'){
+				while(file_data[file_pos]!=','){ // record each current_block number to compare
 					sprintf(current_block_num+strlen(current_block_num), "%c", file_data[file_pos]);
 					file_pos++;
 				}
-				if(atoi(current_block_num)==rm_block){
-					// remove that block, and its comma, only if 0 is not after the comma
+				if(atoi(current_block_num)==rm_block){// remove that block, and its comma only if 0 is not after the comma
 					int bytes_removed=strlen(current_block_num);
-					if(file_data[file_pos+1]!='0'){ // we know filepos is ',', and no leading 0s, so if next is zero that's end of list
-						bytes_removed++; // remove comma unless at the end
-					}
+					if(file_data[file_pos+1]!='0'){ bytes_removed++; } // to know how many bytes to append to end
 					fseek(fh,0,SEEK_SET);
-					int written=fwrite(file_data+bytes_removed, 4096-bytes_removed, 1, fh);
-					//~ int written=fwrite(file_data, 4096-4, 1, fh);
-					
-					char* debug=malloc(100);
-					sprintf(debug, "%d", written);
+					int written=fwrite(file_data+bytes_removed, 1, FILE_SIZE-bytes_removed, fh);					
+					char* append_zeros=malloc(100);
 					log_msg("rm_fb(): # file_data written");
-					log_msg(debug);
-					memset(debug, '0', bytes_removed);
-					fwrite(debug,1, bytes_removed, fh);
-					//~ 
-					//~ int letter='3';
-					//~ char* buf;
-					//~ buf=(char *)malloc(bytes_removed); 
-					//~ memset(buf, letter, bytes_removed);
-					//~ 
-					//~ fseek(fh, 0, SEEK_END); // to append # of 0s
-	
-					//~ fwrite(buf, bytes_removed, 1, fh);
+					sprintf(append_zeros, "%d", written);
+					log_msg(append_zeros);
+					memset(append_zeros, '0', bytes_removed);
+					fwrite(append_zeros, 1, bytes_removed, fh);
 					fclose(fh);
-					// implement this
+					free(append_zeros);
 					free(file_data);
-					//~ free(buf);
-					// NOTE: fusedata.3 removed values 800-811 for testing, should fix that
-					// appended appropriate # of zeros at end, so keep total bytes to 4096
-					
-					
-					// also test this by putting a ',0' after the # we'll be removing (at the start)
-					// test this be doing the same thing, but burying the number in the middle of the free
-					// block block
-					
-					// redo the while not , or 0 to account for
-					// file_pos ++ after hit a ,
-					// but HOW?
-					
-					
-					// thi sdoes in fact stop if put a ,0 at front, and leaves the comma
-					// have now also modified fusedata.1 to fusedata.7 free block blocks
-					return 0;
+					return 0; // success
 				}
-				current_block_num[0]='\0'; // strlen =0, so can compare next blcok #
+				current_block_num[0]='\0'; // sets strlen =0, so can compare next block #
 				file_pos++; // move past the ,
-			}
-			
+			}			
 		}
 		current_block_num++;
 	}
 	free(full_path);
-	return -1; // did not find it
+	return -1; 
 }
 
 int rename_rr(const char* path, const char* new_name){
