@@ -37,6 +37,7 @@ Notes:
 #define PTRS_PER_BLK 400
 #define FREE_BLK_FILES (MAX_FILES/PTRS_PER_BLK)
 #define MAX_DIGITS_BLOCK_NUM 100
+#define MAX_FILE_SIZE PTRS_PER_BLK*FILE_SIZE
 
 void log_msg(const char* msg);
 void* init_rr(struct fuse_conn_info *conn);
@@ -56,6 +57,7 @@ int mkdir_rr(const char *path, mode_t mode);
 	void fill_dir_inode(char* file_data, int parent_block, int free_block);
 	int remove_free_block(int rm_block);
 int rename_rr(const char* path, const char* new_name);
+	int is_entry(const char* parent_data, const char* old_name);
 int rmdir_rr(const char * path);
 int rm_file(const char* path, char dir_or_reg, char last_link);
 	int flush_block_file(char* block_data, int block_num);
@@ -77,7 +79,12 @@ int statfs_rr(const char *path, struct statvfs *statv);
 	int get_link_count(char* file_data);
 	int mod_link_count(char* file_data, int change);
 int link_rr(const char *path, const char *newpath);
- 
+int write_rr(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+	int get_location(const char* inode_data);
+	int set_indirect(char* file_data, int ind_val);
+	int set_location(char* inode_data, int new_bnum);
+	int set_size(char* inode_data, int size);
+	
 void log_msg(const char* msg){
 	// log_msg() simply prints out any passed in c_str to the log file in the CWD.
 	// Note: When passed a block file's data of FILE_SIZE bytes, the data is not null-terminated
@@ -1034,6 +1041,17 @@ int rename_rr(const char* path, const char* new_name){
 		parent_block_pos++;
 	}	
 	
+	
+	int exists=is_entry(parent_data, new_name_ch); // the parent dir removed
+	if(exists==1){ // if the new name you want is already taken
+		unlink_rr(new_name); // unlink that file, then rename yourself
+		if(fi->fh!=(u_int64_t)NULL){ free((char*)fi->fh); } // discard the stale parent inode
+		opendir_rr(parent_path, fi); // load a fresh parent inode reflecting the change
+		log_msg("rename_rr(): non-stale inode=");
+		log_msg((char*)fi->fh); // assumes opendir_rr() worked
+		parent_data=(char*)fi->fh;
+	}
+	
 	// find position for old entry start and end
 	int dict_pos=1, old_name_start=0, old_name_end=0;
 	while(parent_data[dict_pos]!='{'){ dict_pos++; } // skip to the dictionary
@@ -1125,6 +1143,40 @@ int rename_rr(const char* path, const char* new_name){
 	free(fi);
 	log_msg("rename_rr(): exit");
 	return 0;
+}
+
+int is_entry(const char* parent_data, const  char* entry){
+	log_msg("is_entry(): enter, parent_data=, entry  t=");
+	log_msg(parent_data);
+	log_msg(entry);
+	
+	// find position for old entry start and end
+	int dict_pos=1;
+	while(parent_data[dict_pos]!='{'){ dict_pos++; } // skip to the dictionary
+	// then look for every 'd' and 'f' entry, compare
+	while(1){
+		dict_pos++;
+		if(parent_data[dict_pos]=='d'||parent_data[dict_pos]=='f'){ // so can getattr_rr better // +1 is the :
+			int cmp_pos=0;
+			while(parent_data[dict_pos+2]==entry[cmp_pos]){
+				dict_pos++;
+				cmp_pos++;
+			} // if full success, now on the : bit
+			char end_of_name=parent_data[dict_pos+2];
+			dict_pos+=2; // if success, dict_pos+2=':', if fail, dict_pos='d', so move past it and first ':'
+			while(parent_data[dict_pos]!=':') { dict_pos++; } // if success, this gets skipped, if fail, this moves to ':'
+			dict_pos++; // in either case, move past second ':' to get block #
+			if(cmp_pos==strlen(entry) && end_of_name==':'){ // you have a match from start of entry to start of searching entry, and searching entry is not a substring of current entry matching from start
+				// entry has been found
+				log_msg("is_entry(): exit on found entry");
+				return 1;
+			} 
+		}
+		else if(parent_data[dict_pos]=='}' && parent_data[dict_pos+1]=='}'){
+			log_msg("is_entry(): exit on directory not found in dict"); // entry not found
+			return -ENOENT;// ERROR, read the whole dict and directory not found, maybe return -1
+		}
+	}
 }
 
 int rmdir_rr(const char * path){
@@ -1596,7 +1648,7 @@ int get_block_num(const char* path, char dir_or_reg){
 				// now one past the semi colon
 				char* your_block_num=malloc(10); // no more than 10 digits per block #
 				your_block_num[0]='\0';
-				log_msg("get_block_num(): made it here");
+				log_msg("get_block_num(): comparison succeeded");
 				while(parent_data[dict_pos]!=',' && parent_data[dict_pos]!='}') {
 					sprintf(your_block_num+strlen(your_block_num), "%c", parent_data[dict_pos]);
 					dict_pos++;
@@ -1733,20 +1785,16 @@ int insert_parent_entry(const char* path, int block_num){
 	char* new_entry=malloc(MAX_DIGITS_BLOCK_NUM);
 	new_entry[0]='\0';
 	sprintf(new_entry, "%s", ",f:");
-log_msg("\r\n1\r\n");
+	log_msg("insert_parent_entry(): new entry=");
 	log_msg(new_entry);
 	snprintf(new_entry+strlen(new_entry), strlen(path)-new_dir_pos+1, "%s", path+new_dir_pos);
-
-	log_msg(new_entry);
 	sprintf(new_entry+strlen(new_entry), "%s%d%s", ":", block_num, "}}");
 	sprintf(parent_data+parent_block_pos, "%s", new_entry);
-log_msg("\r\n2\r\n");
-
-	log_msg(new_entry);
 	parent_data[strlen(parent_data)]='0'; // so not '\0' and truncated
 	log_msg("insert_parent_entry(): after mod parent_data=");
 	log_msg(parent_data);
 	free(new_entry);
+	
 	// form file name of parent dir, open, and write entry
 	FILE* fh_parent=open_block_file(atoi(parent_block_num));
 	fseek(fh_parent, 0, SEEK_SET);
@@ -1966,14 +2014,217 @@ int link_rr(const char *path, const char *newpath){
 }
 
 int write_rr(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+	/*
+	write_rr() writes the data in buf to a file specified by path and pointed to by fi->fh.
+	* NOTE: files larger than 1 block are not supported yet. Thus a MAX FILE SIZE limit is also not implemented.
+	* RETURN: the number of bytes successfully written, else error code.
+	*/
+	
 	log_msg("write_rr(): enter\r\nwrite_rr(): path=");
 	log_msg(path);
-    
-  
+    log_msg("write_rr(): buf=");
+    log_msg(buf);
+	char* debug=malloc(1000);
+	sprintf(debug, "%d \t %d", (int)size, (int)offset);
+	log_msg(debug);
+	free(debug);
+	log_msg("write_rr(): fi->fh=");
+	log_msg((char*)fi->fh);
+	
+			// this should not open the file inode into fi->fh but should load the data itself
+	if(fi->fh==(u_int64_t)NULL){
+		log_msg("write_rr(): fi->fh==NULL");
+		open_rr(path, fi);
+	}
+	// load file inode so know where data/indirect blocks are
+	int inode_num=get_block_num(path, 'f');
+	FILE* inode_fh=open_block_file(inode_num);
+	char* inode_data=malloc(FILE_SIZE);
+	fread(inode_data, FILE_SIZE, 1, inode_fh);
+	set_size(inode_data, size+offset-1);	
+	fseek(inode_fh, 0, SEEK_SET);
+	fwrite(inode_data, FILE_SIZE, 1, inode_fh);
+	int old_loc=get_location(inode_data);
+	fclose(inode_fh);
+	
+	//~ // if size >4096 first time, handle setting up indirect
+	int indirect=get_indirect(inode_data);
+	if(size+offset > FILE_SIZE && indirect == 0){	
+		remove_free_block(get_data_block_num(inode_data));
+		// update indirect and location fields
+		set_indirect(inode_data, 1);
+		int ind_bnum=first_free_block();
+		set_location(inode_data, ind_bnum);
+		remove_free_block(ind_bnum);
+		
+		// write it back to the file
+		FILE* inode_fh=open_block_file(inode_num);
+		fseek(inode_fh, 0, SEEK_SET);
+		fwrite(inode_data, FILE_SIZE, 1, inode_fh);
+		fclose(inode_fh);
+		
+		// open new block for indirect list, fill it
+		FILE* ind_fh=open_block_file(ind_bnum);
+		char* block_list=malloc(FILE_SIZE);
+		sprintf(block_list, "%d,", old_loc);
+		log_msg("write_rr(): bl=");
+		log_msg(block_list);
+		
+		char* debug=malloc(FILE_SIZE);
+		fread(debug, FILE_SIZE, 1, ind_fh);
+		log_msg(debug);
+		free(debug);
+		
+		fseek(ind_fh, 0, SEEK_SET);
+		fwrite(block_list, strlen(block_list), 1, ind_fh);
+		fclose(ind_fh);
+		
+		free(block_list);
+		free(inode_data);
+		inode_data=NULL;
+	
+	}
+	// if indirect =1 case later
+	
+	
+	
+	// have to iteratively segment the size+offset into FILE_SIZE segments and read the block list
+	// to know where to store them
+	
+	// and since storing at some OFFSET, should not go through all blocks
+	// if offset 5000, open SECOND block, go to 5000-4096 offset, and store there
+	// make sure your files are actually 4096, now it matters
+	
+	// and then we are done
+	char* file_data=(char*)fi->fh;
+	snprintf(file_data+offset, size, "%s", buf);
+	// open the data block location
+	FILE* data_block=open_block_file(old_loc);
+	fwrite(file_data, size+offset-1, 1, data_block);
+	log_msg("write_rr(): file_data=");
+	log_msg(file_data);
+	fclose(data_block);
+	
+	// check for total blocks < max_fiel_size given in specs
+	if(inode_data!=NULL) { free(inode_data); }
+	
 	log_msg("write_rr(): exit");
     return size;
 }
 
+int get_location(const char* inode_data){
+	// get_location() returns the value of the location field in a regular file inode.
+	log_msg("get_location(): enter , inode_data=");
+	log_msg(inode_data);
+	int file_pos=0;
+	while(inode_data[file_pos]!=',' || inode_data[file_pos+1]!='l' || inode_data[file_pos+2]!='o' || inode_data[file_pos+3]!='c'){ file_pos++; }
+	while(inode_data[file_pos-1]!=':'){ file_pos++; }
+	char* bnum=malloc(MAX_DIGITS_BLOCK_NUM);
+	bnum[0]='\0';
+	while(inode_data[file_pos]!='}'){
+		sprintf(bnum+strlen(bnum), "%c", inode_data[file_pos]);
+		log_msg(bnum);
+		file_pos++;
+	}
+	int answer=atoi(bnum);
+	log_msg("get_location(): exit , bnum=");
+	log_msg(bnum);
+	free(bnum);
+	return answer;
+}
+
+int set_location(char* inode_data, int new_bnum){
+	// get_location() sets the value of the location field in a regular file inode.
+	// RETURN: 0 if success.
+	log_msg("set_location(): enter, data=");
+	log_msg(inode_data);
+	int file_pos=0;
+	while(inode_data[file_pos]!=',' || inode_data[file_pos+1]!='l' || inode_data[file_pos+2]!='o' || inode_data[file_pos+3]!='c'){ file_pos++; }
+	while(inode_data[file_pos-1]!=':'){ file_pos++; }
+	char* after_old_entry=malloc(FILE_SIZE);
+	strcpy(after_old_entry, inode_data+file_pos);
+	sprintf(inode_data+file_pos, "%d}", new_bnum); // since this is the last field
+	inode_data[strlen(inode_data)]='0'; // so not '\0' and truncated
+	
+	free(after_old_entry);
+	log_msg("set_location(): exit, data=");
+	log_msg(inode_data);
+	return 0;
+}
+
+int set_indirect(char* file_data, int ind_val){
+	/*
+	set_indirect() takes in a regular file's inode data and sets the indirect field to the 1 digit parameter passed in.
+	* RETURN: 0 if success, else error code
+	*/
+	log_msg("set_indirect(): enter\r\nset_indirect(): file_data=");
+	log_msg(file_data);
+	int file_pos=0;
+	while(file_data[file_pos]!='i' || file_data[file_pos+1]!='n' || file_data[file_pos+2]!='d'){ file_pos++;}
+	while(file_data[file_pos]!=':') { file_pos++; }
+	file_pos++; // move past the : 
+	
+	char* indirect_status=malloc(5); // a 1 or a 0, extra space to be safe
+	sprintf(indirect_status, "%d", ind_val);
+	file_data[file_pos]=indirect_status[0];
+	
+	free(indirect_status);
+	log_msg("set_indirect(): exit, file_data=");
+	log_msg(file_data);
+	return 0;
+}
+
+int set_size(char* inode_data, int size){
+	/*
+	set_size() takes in a regular file's inode data and sets the indirect field to the size parameter passed in.
+	* RETURN: 0 if success, else error code
+	*/
+	log_msg("set_size(): enter\r\nset_size(): file_data=");
+	log_msg(inode_data);
+	int file_pos=0;
+	while(inode_data[file_pos]!='s' || inode_data[file_pos+1]!='i' || inode_data[file_pos+2]!='z'){ file_pos++;}
+	while(inode_data[file_pos]!=':') { file_pos++; }
+	file_pos++; // move past the : 
+	
+	char* inode_size=malloc(20); // 7 digits for max file size, but to be safe
+	sprintf(inode_size, "%d", size);
+
+	char* after_old_entry=malloc(FILE_SIZE);
+	int comma_pos=file_pos;
+	while(inode_data[comma_pos]!=',') { comma_pos++; }
+	strcpy(after_old_entry, inode_data+comma_pos);
+	sprintf(inode_data+file_pos, "%d", size);
+	snprintf(inode_data+strlen(inode_data), FILE_SIZE-strlen(inode_size), "%s", after_old_entry);
+	int end_of_file=FILE_SIZE-1;
+	while(inode_data[end_of_file]!='0'){ // append as many zeros as needed
+		inode_data[end_of_file]='0';
+		end_of_file--;
+	}
+	inode_data[strlen(inode_data)]='0'; // so not '\0' and truncated
+
+	free(after_old_entry);
+	free(inode_size);
+	log_msg("set_size(): exit, inode_data=");
+	log_msg(inode_data);
+	return 0;
+}
+
+int truncate_rr(const char *path, off_t size){
+	log_msg("truncate_rr(): enter, path=");
+	log_msg(path);
+	FILE* inode=open_block_file(get_block_num(path, 'f'));
+	char* inode_data=malloc(FILE_SIZE);
+	fread(inode_data, FILE_SIZE, 1, inode);
+	set_size(inode_data, size);	
+	fseek(inode, 0, SEEK_SET);
+	fwrite(inode_data, FILE_SIZE, 1, inode);
+	free(inode_data);
+	fclose(inode);
+	
+	log_msg("truncate_rr(): exit");
+	return 0;
+}
+			
 static struct fuse_operations oper = {
 	.init	    = init_rr,
 	.opendir 	= opendir_rr,
@@ -1990,11 +2241,14 @@ static struct fuse_operations oper = {
 	.create 	= create_rr,
 	.destroy 	= destroy_rr,
 	.link 		= link_rr,
+	.write 		= write_rr,
+	.truncate 	= truncate_rr,
 };
 
 int main(int argc, char *argv[]){
 	char* fullpath = malloc(FILE_SIZE); // arbitrary max limit on CWD
-	fullpath=getcwd(fullpath, FILE_SIZE); 
+	//~ fullpath=getcwd(fullpath, FILE_SIZE); 
+	fullpath="/fusedata";
 	printf("\n\nObtained CWD:%s\n\n", fullpath);
 	int results=fuse_main(argc, argv, &oper, fullpath);
 	free(fullpath);
