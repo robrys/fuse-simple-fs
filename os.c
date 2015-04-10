@@ -45,6 +45,7 @@ void* init_rr(struct fuse_conn_info *conn);
 	void create_root_dir();
 	void free_block_list();
 	void create_super_block();
+	void inc_mnt_cnt();
 int opendir_rr(const char* path, struct fuse_file_info * fi);
 int getattr_rr(const char *path, struct stat *stbuf);
 int readdir_rr(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
@@ -149,11 +150,69 @@ void* init_rr(struct fuse_conn_info *conn){
 		free_block_list();
 		create_root_dir();
 	}
+	else{ inc_mnt_cnt(); }
 	
 	free(buf);
 	free(blocks_dir);
 	log_msg("init(): exit");
 	return fuse_get_context()->private_data; 
+}
+
+void inc_mnt_cnt(){
+	log_msg("create_super_block(): enter");
+	
+	// size file_name string, fill it
+	char* blocks_dir=malloc(bdir_path_size());
+	sprintf(blocks_dir, "%s", (char *) fuse_get_context()->private_data);
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/blocks");
+	sprintf(blocks_dir+strlen(blocks_dir), "%s", "/fusedata.0");
+	log_msg(blocks_dir);
+	
+	// open superblock file, fill it
+	int result=access(blocks_dir, F_OK);
+	if( result==0 ){ // opened okay 				
+		FILE* fd=fopen(blocks_dir,"r+");
+		char* file_data=malloc(FILE_SIZE);
+		fread(file_data, FILE_SIZE, 1, fd);
+		int file_pos=0;
+		while(file_data[file_pos]!=',' || file_data[file_pos+1]!='m' || file_data[file_pos+2]!='o' ){ file_pos++; }
+		while(file_data[file_pos-1]!=':') { file_pos++; }
+		int start_pos=file_pos;
+		char* old_count=malloc(MAX_DIGITS_BLOCK_NUM); // arbitrary upper limit for mount increments
+		old_count[0]='\0';
+		while(file_data[file_pos]!=','){
+			sprintf(old_count+strlen(old_count), "%c", file_data[file_pos]);
+			file_pos++;
+		}
+		int comma_pos=file_pos;
+		
+		char* after_old_entry=malloc(FILE_SIZE);
+		strncpy(after_old_entry, file_data+comma_pos, FILE_SIZE-comma_pos);
+		int old_strlen=comma_pos-start_pos;
+		sprintf(old_count, "%d", atoi(old_count)+1); // overwrite the old count
+		sprintf(file_data+start_pos, "%d", atoi(old_count));
+		int new_strlen=	strlen(old_count);
+		
+		int bytes_fewer=0;
+		if(new_strlen>old_strlen){ // will only ever increase
+			bytes_fewer=new_strlen-old_strlen;
+		}
+		snprintf(file_data+strlen(file_data), FILE_SIZE-comma_pos-bytes_fewer, "%s", after_old_entry);
+		int replace_zeros=FILE_SIZE-1;
+		while(file_data[replace_zeros]!='0'){
+			file_data[replace_zeros]='0';
+			replace_zeros--;
+		}
+		file_data[strlen(file_data)]='0'; // so not a null
+		fseek(fd, 0, SEEK_SET);
+		fwrite(file_data, 1, FILE_SIZE, fd);
+		fclose(fd);	
+		free(file_data);
+		free(old_count);
+		free(after_old_entry);
+	} // else fail silently
+	
+	free(blocks_dir);
 }
 
 int bdir_path_size(){
