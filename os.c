@@ -1817,7 +1817,6 @@ int insert_parent_entry(const char* path, int block_num){
 	parent_path[parent_pos+1]='\0';
 	struct fuse_file_info* fi=malloc(sizeof(struct fuse_file_info));
 	opendir_rr(parent_path, fi); // assumes this doesn't fail, checking done before calling function
-	free(parent_path);
 	int new_dir_pos=parent_pos+1;
 
 	// extract the parent dir's block #
@@ -1852,6 +1851,8 @@ int insert_parent_entry(const char* path, int block_num){
 	log_msg(parent_data);
 	free(new_entry);
 	
+	//~ set_time(parent_data, parent_path, 'd', 'm');
+	free(parent_path);
 	// form file name of parent dir, open, and write entry
 	FILE* fh_parent=open_block_file(atoi(parent_block_num));
 	fseek(fh_parent, 0, SEEK_SET);
@@ -2088,7 +2089,9 @@ int write_rr(const char *path, const char *buf, size_t size, off_t offset, struc
 	log_msg("write_rr(): fi->fh=");
 	log_msg((char*)fi->fh);
 	
-			// this should not open the file inode into fi->fh but should load the data itself
+
+	
+	// this should not open the file inode into fi->fh but should load the data itself
 	if(fi->fh==(u_int64_t)NULL){
 		log_msg("write_rr(): fi->fh==NULL");
 		open_rr(path, fi);
@@ -2104,6 +2107,8 @@ int write_rr(const char *path, const char *buf, size_t size, off_t offset, struc
 	int old_loc=get_location(inode_data);
 	fclose(inode_fh);
 	
+	set_time(inode_data, path, 'f', 'm');
+		
 	//~ // if size >4096 first time, handle setting up indirect
 	int indirect=get_indirect(inode_data);
 	if(size+offset > FILE_SIZE && indirect == 0){	
@@ -2320,12 +2325,18 @@ int set_time(char* inode_data, const char* path, const char dir_or_reg, const ch
 		replace_zeros--;
 	}
 	
-	//~ char* parent_path=malloc(bdir_path_size());
-	//~ int p_path_pos=strlen(path)-1;
-	//~ while(path[p_path_pos]!='/'){ p_path_pos--; }
-	//~ strncpy(parent_path, path, p_path_pos+1);
-	//~ parent_path[p_path_pos+1]='\0';
-	int block_num=get_block_num(path, dir_or_reg);
+	char* parent_path=malloc(bdir_path_size());
+	int p_path_pos=strlen(path)-1;
+	while(path[p_path_pos]!='/'){ p_path_pos--; }
+	if(p_path_pos==0){ // root dir is parent
+		strncpy(parent_path, path, p_path_pos+1); // copy 1 byte
+		parent_path[p_path_pos+1]='\0'; // terminate string
+	}
+	else { 
+		strncpy(parent_path, path, p_path_pos); // cut off trailing /
+		parent_path[p_path_pos]='\0'; // terminate string		
+	}
+	int block_num=get_block_num(parent_path, dir_or_reg);
 	flush_block_file(inode_data, block_num);
 	
 	//~ free(parent_path);
