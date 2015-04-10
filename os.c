@@ -49,6 +49,7 @@ int opendir_rr(const char* path, struct fuse_file_info * fi);
 int getattr_rr(const char *path, struct stat *stbuf);
 int readdir_rr(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 int open_rr(const char *path, struct fuse_file_info *fi);
+	int set_time(char* inode_data, const char* path, const char dir_or_reg, const char time_type);
 int read_rr(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int release_rr(const char * path, struct fuse_file_info * fi);
 int releasedir_rr(const char * path, struct fuse_file_info * fi);
@@ -365,6 +366,7 @@ int opendir_rr(const char* path, struct fuse_file_info * fi){
 				if(fi!=NULL){ fi->fh=(uint64_t)block_data; } 
 				log_msg("opendir_rr(): exit with data=");
 				log_msg(block_data);
+				//~ set_atime(block_data, path, 'd');
 				return 0; // success
 		} 
 
@@ -497,12 +499,27 @@ int readdir_rr(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset
 	log_msg(path);
 	
 	// load the directory inode data passed in from opendir_rr()'s fi->fh
-	char* block_data=(char *)fi->fh;
-	if(fi->fh==(u_int64_t)NULL) { 
-		log_msg("\readdir_rr(): fi->fh==NULL");
-		return -EBADFD; 
-	}
+	//~ char* block_data=(char *)fi->fh;
+	//~ if(fi->fh==(u_int64_t)NULL) { 
+		//~ log_msg("\readdir_rr(): fi->fh==NULL");
+		//~ return -EBADFD; 
+	//~ }
 
+	// sometimes has stale data for some reason
+	if(fi->fh!=(u_int64_t)NULL){
+		log_msg("old fi");
+		log_msg((char*)fi->fh);
+		free((char*)fi->fh);
+		fi->fh=(u_int64_t)NULL;
+		opendir_rr(path, fi); // does an malloc
+		log_msg("new fi");
+		log_msg((char*)fi->fh);
+	}
+	
+	char* block_data=(char *)fi->fh;
+	
+	set_time(block_data, path, 'd', 'a');
+	
 	// set up memory for current_entry
 	char* current_entry=malloc(strlen(path)); // upper limit
 	sprintf(current_entry, "%c%c", '/', '\0');
@@ -530,6 +547,8 @@ int readdir_rr(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset
 		if(block_data[dict_pos]==','){ dict_pos+=3; } // advance past those 3 chars ',' 'd' ':'
 		else if(block_data[dict_pos]=='}'){  // success
 			free(current_entry); 
+			free((char*)fi->fh);
+			fi->fh=(u_int64_t)NULL;
 			log_msg("readdir_rr(): exit -> end of dict");
 			return 0; // you've read the dictionary
 		}
@@ -560,6 +579,9 @@ int open_rr(const char *path, struct fuse_file_info *fi) {
 		return -ENOENT;
 	}	
 	char* block_data=(char*)fi->fh;
+	
+	// update the access time
+	set_time(block_data, path, 'f', 'a');
 	
 	// find status of INDIRECT field
 	int loc_pos=1, indirect=-1;	
@@ -723,7 +745,7 @@ int releasedir_rr(const char * path, struct fuse_file_info * fi){
 	if( fi!=NULL && fi->fh!=(u_int64_t)NULL){
 		log_msg("releasedir(): fi->fh");
 		log_msg((char*)fi->fh);
-		free((void*)fi->fh);
+		//~ free((void*)fi->fh); // readdir already does this, but fuse seems to unset fi->fh from NULL
 		fi->fh=(u_int64_t)NULL;
 	}
 	log_msg("releasedir(): exit");
@@ -746,17 +768,18 @@ int mkdir_rr(const char *path, mode_t mode){
 	
 	// defensively verify that directory does not already exist
 	struct fuse_file_info * fi=malloc(sizeof(struct fuse_file_info));
-	int result=opendir_rr(path, fi);
-	if(result!=-ENOENT){ 
-		log_msg("mkdir_rr(): exit, file already exists/error"); // log the inode's data if it does
-		if(fi->fh!=(u_int64_t)NULL) { 
-			log_msg("mkdir_rr(): fi->fh="); 
-			log_msg((char*)fi->fh); 
-			free((void*)fi->fh);
-		}
-		free(fi);
-		return -EEXIST; 
-	}
+	int result=0;
+	//~ int result=opendir_rr(path, fi);
+	//~ if(result!=-ENOENT){ 
+		//~ log_msg("mkdir_rr(): exit, file already exists/error"); // log the inode's data if it does
+		//~ if(fi->fh!=(u_int64_t)NULL) { 
+			//~ log_msg("mkdir_rr(): fi->fh="); 
+			//~ log_msg((char*)fi->fh); 
+			//~ free((void*)fi->fh);
+		//~ }
+		//~ free(fi);
+		//~ return -EEXIST; 
+	//~ }
 	
 	log_msg("mkdir_rr(): SUCCESS. dir does not already exist");	
 	int free_block=first_free_block();
@@ -787,10 +810,17 @@ int mkdir_rr(const char *path, mode_t mode){
 	int parent_pos=strlen(path)-1; // so starts at last char
 	while(path[parent_pos]!='/'){ parent_pos--; }
 	char* parent_path=malloc(strlen(path)); // upper limit 
-	strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
-	parent_path[parent_pos+1]='\0';
+	if(parent_pos==0){ 	
+		strncpy(parent_path, path, parent_pos+1); 
+		parent_path[parent_pos+1]='\0';
+	} // so / is pos 0, but 1 byte gets copied
+	else{ 
+		strncpy(parent_path, path, parent_pos); 
+		parent_path[parent_pos]='\0';
+	}
+
 	result=opendir_rr(parent_path, fi); // assumes this doesn't fail
-	free(parent_path);
+
 	int new_dir_pos=parent_pos+1;
 
 	// extract the parent dir's block #
@@ -827,13 +857,21 @@ int mkdir_rr(const char *path, mode_t mode){
 	sprintf(new_entry, "%s", ",d:");
 	snprintf(new_entry+strlen(new_entry), strlen(path)-new_dir_pos+1, "%s", path+new_dir_pos);
 	sprintf(new_entry+strlen(new_entry), "%s%d%s", ":", free_block, "}}");
+	log_msg("mkdir_rr(): new_entry=");
+	log_msg(new_entry);
 	sprintf(parent_data+parent_block_pos, "%s", new_entry);
+	log_msg("mkdir_rr(): parent_data=");
+	log_msg(parent_data);
+
 	parent_data[strlen(parent_data)]='0'; // so not '\0' and truncated
 	free(new_entry);
 
 	// form file name of parent dir, open, and write entry
 	file_name[0]='\0';
 	sprintf(file_name, "%s%s%d", (char*)fuse_get_context()->private_data, "/blocks/fusedata.", atoi(parent_block_num));
+	log_msg("mkdir_rr(): file_name of parent=");
+	log_msg(file_name);
+
 	result = access(file_name, F_OK);
 	if(result!=0){
 		log_msg("mkdir_rr(): error opening parent block");
@@ -846,10 +884,15 @@ int mkdir_rr(const char *path, mode_t mode){
 		free(parent_block_num);
 		return -EACCES;
 	}
-	FILE* fh_parent=fopen(file_name, "w"); //overwrite everything
+	FILE* fh_parent=fopen(file_name, "r+"); //overwrite everything
+	fseek(fh_parent, 0, SEEK_SET);
 	fwrite(parent_data, 1, FILE_SIZE, fh_parent);
 	fclose(fh_parent);	
 	
+	// update access time
+	set_time(parent_data, parent_path, 'd', 'a'); // parent path
+	
+ 	free(parent_path);
 	// only remove the free block from the list if this all succeeded
 	if(success){
 		// once file written successfully, remove the free block from the free block list
@@ -860,7 +903,10 @@ int mkdir_rr(const char *path, mode_t mode){
 		log_msg(debug);
 	}
 	free(debug);
+	if(fi->fh!=(u_int64_t)NULL){ free((char*)fi->fh); }
+	fi->fh=(u_int64_t)NULL;
 	free(fi);
+	fi=NULL;
 	free(file_name);
 	free(file_data);
 	free(parent_block_num);
@@ -1390,14 +1436,16 @@ int flush_block_file(char* block_data, int block_num){
 	* opens the block file, and flushes the data to the block file.
 	* RETURN: 0 if success, else appropriat ERRNO error code.
 	*/
-	log_msg("flush_block_file(): enter");
-	
+	log_msg("flush_block_file(): enter, data=");
+	log_msg(block_data);
 	FILE* fh=open_block_file(block_num);
 	if(fh<0) { return (long int)fh; } // error code
+	fseek(fh, 0, SEEK_SET);
 	fwrite(block_data, 1, FILE_SIZE, fh);
 	fclose(fh);	
 	
-	log_msg("flush_block_file(): exit");
+	log_msg("flush_block_file(): exit, data=");
+	log_msg(block_data);
 	return 0;
 }
 
@@ -1594,9 +1642,18 @@ int get_block_num(const char* path, char dir_or_reg){
 	get_block_num() takes in a path to a file and a char indicating 'd' for dir or 'f' for regular file,
 	* and returns the block number of that file in its parent directory's inode.
 	*/
+	log_msg("get_block_num(): enter, path=, dir_or_reg=");
+	log_msg(path);
+	
 	int got_block_num=-1;
 	// find pos in path that separates parent dir and file name
 	int parent_pos=strlen(path)-1; // so starts at last char
+	if(parent_pos==0) { 
+		log_msg("get_block_num(): exit on path is root dir, known block #");
+		log_msg(path);
+		return FREE_BLK_FILES+1; 
+	} // if a 1 char path, its the root, block num is one after free block list
+	
 	while(path[parent_pos]!='/'){  parent_pos--; }
 	int file_name_pos=parent_pos+1; // to pull out file name
 
@@ -2224,7 +2281,60 @@ int truncate_rr(const char *path, off_t size){
 	log_msg("truncate_rr(): exit");
 	return 0;
 }
-			
+	
+int set_time(char* inode_data, const char* path, const char dir_or_reg, const char time_type){
+	/*
+	set_time() updates the access time for a given file's inode. 
+	* RETURN: 0 if success	
+	*/
+	log_msg("set_time(): enter, data=");
+	log_msg(inode_data);
+	time_t current_time;
+	time(&current_time);
+	
+	int inode_pos=0;
+	while(inode_data[inode_pos]!=',' || inode_data[inode_pos+1]!=time_type || inode_data[inode_pos+2]!='t' || inode_data[inode_pos+3]!='i'){
+		inode_pos++; // find the atime field
+	}	
+	while(inode_data[inode_pos-1]!=':'){ inode_pos++; } // proceed to its value
+	int comma_pos=inode_pos;
+	while(inode_data[comma_pos]!=','){ comma_pos++; } 
+	int old_strlen=comma_pos-inode_pos;
+	
+	char* after_old_entry=malloc(FILE_SIZE); // copy from the comma after to the end
+	strncpy(after_old_entry, inode_data+comma_pos, FILE_SIZE-comma_pos); 
+	log_msg(after_old_entry);
+	log_msg(inode_data);
+	sprintf(inode_data+inode_pos, "%d", (int)current_time);
+	log_msg(inode_data);
+		
+	int new_strlen=strlen(inode_data)-inode_pos; // timestamps will only ever increase
+	int copy_fewer=0;
+	if(new_strlen-old_strlen > 0){
+		copy_fewer=new_strlen-old_strlen; // copy fewer bytes so total is 4096
+	}
+	snprintf(inode_data+strlen(inode_data), FILE_SIZE-comma_pos-copy_fewer, "%s", after_old_entry);
+	int replace_zeros=FILE_SIZE-1;
+	while(inode_data[replace_zeros]!='0'){
+		inode_data[replace_zeros]='0';
+		replace_zeros--;
+	}
+	
+	//~ char* parent_path=malloc(bdir_path_size());
+	//~ int p_path_pos=strlen(path)-1;
+	//~ while(path[p_path_pos]!='/'){ p_path_pos--; }
+	//~ strncpy(parent_path, path, p_path_pos+1);
+	//~ parent_path[p_path_pos+1]='\0';
+	int block_num=get_block_num(path, dir_or_reg);
+	flush_block_file(inode_data, block_num);
+	
+	//~ free(parent_path);
+	free(after_old_entry);
+	log_msg("set_time(): exit, data=");
+	log_msg(inode_data);
+	return 0;
+}
+		
 static struct fuse_operations oper = {
 	.init	    = init_rr,
 	.opendir 	= opendir_rr,
