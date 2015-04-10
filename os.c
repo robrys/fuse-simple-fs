@@ -60,6 +60,7 @@ int mkdir_rr(const char *path, mode_t mode);
 int rename_rr(const char* path, const char* new_name);
 	int is_entry(const char* parent_data, const char* old_name);
 int rmdir_rr(const char * path);
+	int is_dir_empty(const char* parent_data);
 int rm_file(const char* path, char dir_or_reg, char last_link);
 	int flush_block_file(char* block_data, int block_num);
 	FILE* open_block_file(int block_num);
@@ -1234,7 +1235,23 @@ int rmdir_rr(const char * path){
 	*/
 	return rm_file(path, 'd', 'y');
 }
-
+		
+int is_dir_empty(const char* parent_data){
+	log_msg("is_dir_empty(): enter, data=");
+	log_msg(parent_data);
+	int answer=-ENOTEMPTY; // dir is not empty
+	
+	int inode_pos=0;
+	while(parent_data[inode_pos]!='}' || parent_data[inode_pos+1]!='}') { inode_pos++; } // scan to the end of the dictionary
+	while(parent_data[inode_pos]!=':') { inode_pos--; } // scan to most previous entry
+	if(parent_data[inode_pos-1]=='.' && parent_data[inode_pos-2]=='.' && parent_data[inode_pos-3] ==':'){
+		answer=1; // dir is empty
+	}
+	log_msg("is_dir_empty(): exit, data=");
+	log_msg(parent_data);
+	return answer;
+}
+		
 int rm_file(const char* path, char dir_or_reg, char last_link){
 	/*
 	rm_file() takes in a path to a file to be removed, a character indicating its type ('d' for dir, 'f' for regular file)
@@ -1244,6 +1261,18 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 	*/
 	log_msg("rm_file(): enter\r\nrm_file(): path=");
 	log_msg(path);
+		
+	if(dir_or_reg=='d'){ // only allow operation if dir is empty
+		struct fuse_file_info* fi=malloc(sizeof(struct fuse_file_info));
+		opendir_rr(path, fi); // assumes this works
+		char* parent_data=(char*)fi->fh;
+		int dir_empty=is_dir_empty(parent_data);
+		if(dir_empty==-ENOTEMPTY){ 
+			log_msg("rm_file(): exit on attempt to remove non-empty dir");
+			free(parent_data);
+			return dir_empty; 
+		} // else if directory is empty, proceed
+	}
 	
 	// extract dir name from file path
 	int parent_pos=strlen(path)-1; // so starts at last char
@@ -1272,7 +1301,6 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 		return -ENOENT;
 	}
 	char* parent_data=(char*)fi->fh; 
-	
 	// extract the parent dir's block #, so can open fusedata.X later to write back changes
 	int parent_block_pos=0;
 	while(parent_data[parent_block_pos]!=':' || parent_data[parent_block_pos+1]!='.' || parent_data[parent_block_pos+2]!=':'){
@@ -1294,7 +1322,7 @@ int rm_file(const char* path, char dir_or_reg, char last_link){
 		log_msg("rm_file(): exit on error finding block # in parent directory");
 		return -ENOENT;
 	}
-	
+
 	// find dir name position in parent dir inode's dictionary, get rid of it, handle byte appending
 	int len_diff=strlen(dir_name);
 	int dict_pos=1, dir_name_start=0, dir_name_end=0;
