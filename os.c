@@ -1813,8 +1813,14 @@ int insert_parent_entry(const char* path, int block_num){
 	int parent_pos=strlen(path)-1; // so starts at last char
 	while(path[parent_pos]!='/'){ parent_pos--; }
 	char* parent_path=malloc(strlen(path)); // upper limit
-	strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
-	parent_path[parent_pos+1]='\0';
+	if(parent_pos==0){
+		strncpy(parent_path, path, parent_pos+1); // so / is pos 0, but 1 byte gets copied
+		parent_path[parent_pos+1]='\0';
+	}
+	else{
+		strncpy(parent_path, path, parent_pos); // leave off trailing '/' unless its the root dir
+		parent_path[parent_pos]='\0';
+	}
 	struct fuse_file_info* fi=malloc(sizeof(struct fuse_file_info));
 	opendir_rr(parent_path, fi); // assumes this doesn't fail, checking done before calling function
 	int new_dir_pos=parent_pos+1;
@@ -1851,7 +1857,7 @@ int insert_parent_entry(const char* path, int block_num){
 	log_msg(parent_data);
 	free(new_entry);
 	
-	//~ set_time(parent_data, parent_path, 'd', 'm');
+	set_time(parent_data, parent_path, 'd', 'm');
 	free(parent_path);
 	// form file name of parent dir, open, and write entry
 	FILE* fh_parent=open_block_file(atoi(parent_block_num));
@@ -2325,18 +2331,12 @@ int set_time(char* inode_data, const char* path, const char dir_or_reg, const ch
 		replace_zeros--;
 	}
 	
-	char* parent_path=malloc(bdir_path_size());
-	int p_path_pos=strlen(path)-1;
-	while(path[p_path_pos]!='/'){ p_path_pos--; }
-	if(p_path_pos==0){ // root dir is parent
-		strncpy(parent_path, path, p_path_pos+1); // copy 1 byte
-		parent_path[p_path_pos+1]='\0'; // terminate string
-	}
-	else { 
-		strncpy(parent_path, path, p_path_pos); // cut off trailing /
-		parent_path[p_path_pos]='\0'; // terminate string		
-	}
-	int block_num=get_block_num(parent_path, dir_or_reg);
+	//~ char* parent_path=malloc(bdir_path_size());
+	//~ int p_path_pos=strlen(path)-1;
+	//~ while(path[p_path_pos]!='/'){ p_path_pos--; }
+	//~ strncpy(parent_path, path, p_path_pos+1);
+	//~ parent_path[p_path_pos+1]='\0';
+	int block_num=get_block_num(path, dir_or_reg);
 	flush_block_file(inode_data, block_num);
 	
 	//~ free(parent_path);
